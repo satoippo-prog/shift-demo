@@ -670,15 +670,16 @@ export default function ShiftManager(){
   const getCollectionForMonth=(y,m)=>collections[`${y}-${m}`];
   const curCollection=getCollectionForMonth(year,month);
 
+  const saveCollections=(next)=>{try{localStorage.setItem('shift_demo_collections',JSON.stringify(next));}catch{}setCollections(next);};
   const startCollection=()=>{
     const{targetYear:ty,targetMonth:tm,deadline:dl}=collectionForm;
     const key=`${ty}-${tm-1}`;
     if(collections[key]&&collections[key].status!=="not_started")return;
-    setCollections(p=>({...p,[key]:{status:"collecting",deadline:dl||null,targetYear:ty,targetMonth:tm-1,startedAt:new Date().toISOString()}}));
+    saveCollections({...collections,[key]:{status:"collecting",deadline:dl||null,targetYear:ty,targetMonth:tm-1,startedAt:new Date().toISOString()}});
     setShowCollectionDialog(false);
   };
-  const closeCollection=(key)=>{setCollections(p=>({...p,[key]:{...p[key],status:"closed"}}));};
-  const reopenCollection=(key)=>{setCollections(p=>({...p,[key]:{...p[key],status:"collecting"}}));};
+  const closeCollection=(key)=>{saveCollections({...collections,[key]:{...collections[key],status:"closed"}});};
+  const reopenCollection=(key)=>{saveCollections({...collections,[key]:{...collections[key],status:"collecting"}});};
   const approveModRequest=(idx)=>{
     const req=modRequests[idx];if(!req)return;
     const key=sk(req.staffId,req.targetYear,req.targetMonth,req.day);
