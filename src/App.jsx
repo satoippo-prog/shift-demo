@@ -61,7 +61,16 @@ function LandingPage() {
           </div>
         </div>
 
-        <p style={{ fontSize: 11, color: '#94A3B8', marginTop: 24 }}>
+        <button
+          onClick={() => {
+            Object.keys(localStorage).filter(k => k.startsWith('shift_demo_')).forEach(k => localStorage.removeItem(k));
+            window.location.reload();
+          }}
+          style={{ fontSize: 11, color: '#94A3B8', marginTop: 24, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+        >
+          デモをリセット
+        </button>
+        <p style={{ fontSize: 11, color: '#94A3B8', marginTop: 8 }}>
           Powered by LFU Inc.
         </p>
       </div>

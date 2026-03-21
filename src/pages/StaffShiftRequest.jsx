@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 
 const SHIFT_TYPES = {
   early: { label: "早", name: "早番希望", color: "#B45309", bg: "#FEF3C7", border: "#F59E0B" },
@@ -177,8 +177,14 @@ function ModRequestForm({user,collection,onSubmit,onCancel}){
 
 /* ─── Main Screen ─── */
 function SubmissionScreen({user,onLogout}){
-  const collections=DEMO_COLLECTIONS;
-  const openCollections=collections.filter(c=>c.status==="collecting"||c.status==="closed");
+  const lsGet=(key,def)=>{try{const v=localStorage.getItem(key);return v!=null?JSON.parse(v):def;}catch{return def;}};
+  const openCollections=useMemo(()=>{
+    try{
+      const stored=localStorage.getItem('shift_demo_collections');
+      if(stored){const obj=JSON.parse(stored);const arr=Object.values(obj).filter(c=>c.status==="collecting"||c.status==="closed");if(arr.length>0)return arr;}
+    }catch{}
+    return DEMO_COLLECTIONS.filter(c=>c.status==="collecting"||c.status==="closed");
+  },[]);
   const[activeIdx,setActiveIdx]=useState(()=>{const ci=openCollections.findIndex(c=>c.status==="collecting");return ci>=0?ci:0;});
   const col=openCollections[activeIdx]||null;
 
@@ -188,8 +194,10 @@ function SubmissionScreen({user,onLogout}){
   const dim=col?daysIn(targetYear,m0):0;
   const isClosed=col?.status==="closed";
 
-  const[prefs,setPrefs]=useState({});
-  const[submitted,setSubmitted]=useState({});
+  const[prefs,setPrefs]=useState(()=>lsGet(`shift_demo_prefs_${user.id}`,{}));
+  const[submitted,setSubmitted]=useState(()=>lsGet(`shift_demo_submitted_${user.id}`,{}));
+  useEffect(()=>{try{localStorage.setItem(`shift_demo_prefs_${user.id}`,JSON.stringify(prefs));}catch{}},[prefs,user.id]);
+  useEffect(()=>{try{localStorage.setItem(`shift_demo_submitted_${user.id}`,JSON.stringify(submitted));}catch{}},[submitted,user.id]);
   const[showConfirm,setShowConfirm]=useState(false);
   const[comment,setComment]=useState("");
   const[selectedDay,setSelectedDay]=useState(null);
@@ -206,8 +214,14 @@ function SubmissionScreen({user,onLogout}){
   const savePref=(d,val)=>{
     if(isClosed||isSubmitted)return;
     const key=pk(d);
-    if(!val){setPrefs(p=>{const n={...p};delete n[key];return n;});}
-    else{setPrefs(p=>({...p,[key]:val}));}
+    const sharedKey=`${user.id}-${targetYear}-${targetMonth}-${d}`;
+    if(!val){
+      setPrefs(p=>{const n={...p};delete n[key];return n;});
+      try{const pd=JSON.parse(localStorage.getItem('shift_demo_prefData')||'{}');delete pd[sharedKey];localStorage.setItem('shift_demo_prefData',JSON.stringify(pd));}catch{}
+    }else{
+      setPrefs(p=>({...p,[key]:val}));
+      try{const pd=JSON.parse(localStorage.getItem('shift_demo_prefData')||'{}');pd[sharedKey]=val;localStorage.setItem('shift_demo_prefData',JSON.stringify(pd));}catch{}
+    }
     setSelectedDay(null);
   };
 
@@ -217,7 +231,11 @@ function SubmissionScreen({user,onLogout}){
   const role=ROLES[user.role];
   const allowed=user.allowedShifts||WORK_SHIFTS;
 
-  const handleModSubmit=(data)=>{setModSent(true);setShowModForm(false);};
+  const handleModSubmit=(data)=>{
+    const req={staffId:user.id,targetYear,targetMonth,day:data.day,newPref1:data.newPref1,newPref2:null,reason:data.reason,status:"pending"};
+    try{const existing=JSON.parse(localStorage.getItem('shift_demo_modRequests')||'[]');localStorage.setItem('shift_demo_modRequests',JSON.stringify([...existing,req]));}catch{}
+    setModSent(true);setShowModForm(false);
+  };
 
   if(openCollections.length===0){
     return(
