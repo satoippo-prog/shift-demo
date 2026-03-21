@@ -47,11 +47,19 @@ const dowN=(y,m,d)=>new Date(y,m,d).getDay();
 
 const PB=({type,size="md"})=>{if(!type||!SHIFT_TYPES[type])return null;const st=SHIFT_TYPES[type];const sz=size==="sm"?{width:20,height:16,fontSize:9,borderRadius:3}:size==="lg"?{width:36,height:30,fontSize:14,borderRadius:6}:{width:26,height:20,fontSize:10,borderRadius:4};return <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:600,color:st.color,background:st.bg,border:`1.5px solid ${st.border}`,letterSpacing:-0.5,...sz}}>{st.label}</span>;};
 
-/* Demo: simulated collection status */
-const DEMO_COLLECTIONS = [
-  { targetYear: 2026, targetMonth: 3, status: "collecting", deadline: "2026-03-20", label: "4月分" },
-  { targetYear: 2026, targetMonth: 4, status: "closed", deadline: "2026-03-25", label: "5月分" },
-];
+/* 管理者がlocalStorageに保存したcollectionsを読み込む */
+function loadAdminCollections(){
+  try{
+    const stored=localStorage.getItem('shift_demo_collections');
+    if(stored){
+      const obj=JSON.parse(stored);
+      return Object.values(obj)
+        .filter(c=>c.status==="collecting"||c.status==="closed")
+        .sort((a,b)=>a.targetYear!==b.targetYear?a.targetYear-b.targetYear:a.targetMonth-b.targetMonth);
+    }
+  }catch{}
+  return [];
+}
 
 /* ─── Auth ─── */
 function TokenAuth({onAuth}){
@@ -178,14 +186,15 @@ function ModRequestForm({user,collection,onSubmit,onCancel}){
 /* ─── Main Screen ─── */
 function SubmissionScreen({user,onLogout}){
   const lsGet=(key,def)=>{try{const v=localStorage.getItem(key);return v!=null?JSON.parse(v):def;}catch{return def;}};
-  const openCollections=useMemo(()=>{
-    try{
-      const stored=localStorage.getItem('shift_demo_collections');
-      if(stored){const obj=JSON.parse(stored);const arr=Object.values(obj).filter(c=>c.status==="collecting"||c.status==="closed");if(arr.length>0)return arr;}
-    }catch{}
-    return DEMO_COLLECTIONS.filter(c=>c.status==="collecting"||c.status==="closed");
+  const[openCollections,setOpenCollections]=useState(()=>loadAdminCollections());
+  useEffect(()=>{
+    const refresh=()=>setOpenCollections(loadAdminCollections());
+    window.addEventListener('storage',refresh);
+    window.addEventListener('focus',refresh);
+    return()=>{window.removeEventListener('storage',refresh);window.removeEventListener('focus',refresh);};
   },[]);
   const[activeIdx,setActiveIdx]=useState(()=>{const ci=openCollections.findIndex(c=>c.status==="collecting");return ci>=0?ci:0;});
+  useEffect(()=>{setActiveIdx(i=>{const ci=openCollections.findIndex(c=>c.status==="collecting");const best=ci>=0?ci:0;return i<openCollections.length?i:best;});},[openCollections]);
   const col=openCollections[activeIdx]||null;
 
   const targetYear=col?.targetYear||2026;
