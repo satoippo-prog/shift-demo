@@ -1,8 +1,22 @@
 import React, { useState, useEffect } from 'react'
 import ShiftManager from './pages/ShiftManager'
 import StaffShiftRequest from './pages/StaffShiftRequest'
+import { seedDemoStorage } from './demoSeed'
+
+/* 初回ロード時（またはリセット後）にデモデータを自動投入 */
+if (!localStorage.getItem('shift_demo_shifts')) {
+  seedDemoStorage()
+}
 
 function LandingPage() {
+  const handleReset = () => {
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('shift_demo_'))
+      .forEach(k => localStorage.removeItem(k))
+    seedDemoStorage()
+    window.location.reload()
+  }
+
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -53,19 +67,17 @@ function LandingPage() {
           marginTop: 40, padding: '16px 20px', background: '#FFF', borderRadius: 12,
           border: '1px solid #E2E8F0', textAlign: 'left',
         }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 8 }}>デモの使い方</div>
-          <div style={{ fontSize: 12, color: '#64748B', lineHeight: 1.8 }}>
-            <b style={{ color: '#0F172A' }}>管理者画面:</b> 「自動仮入力」でシフトを埋めて各機能を確認<br />
-            <b style={{ color: '#0F172A' }}>従業員画面:</b> ID 1〜22 / PW 0000 でログイン<br />
-            <b style={{ color: '#0F172A' }}>管理者PW:</b> admin123（シフト確定後の調整モード用）
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 8 }}>デモの見どころ</div>
+          <div style={{ fontSize: 12, color: '#64748B', lineHeight: 1.9 }}>
+            <b style={{ color: '#0F172A' }}>管理者画面:</b> 今月のシフト表・希望集計・アラートを確認<br />
+            <b style={{ color: '#0F172A' }}>従業員画面:</b> ID 1〜22 / PW 0000 でログイン → 来月分を提出<br />
+            <b style={{ color: '#0F172A' }}>提出後:</b> 管理者の「希望」ビューにリアルタイム反映<br />
+            <b style={{ color: '#0F172A' }}>管理者PW:</b> admin123（シフト確定・調整モード用）
           </div>
         </div>
 
         <button
-          onClick={() => {
-            Object.keys(localStorage).filter(k => k.startsWith('shift_demo_')).forEach(k => localStorage.removeItem(k));
-            window.location.reload();
-          }}
+          onClick={handleReset}
           style={{ fontSize: 11, color: '#94A3B8', marginTop: 24, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
         >
           デモをリセット
