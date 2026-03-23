@@ -1,4 +1,7 @@
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { supabase } from "../lib/supabase";
+
+const FID = import.meta.env.VITE_FACILITY_ID;
 
 /* ─── Default Data ─── */
 const DEF_SHIFTS = {
@@ -27,30 +30,6 @@ const ROLE_BGS = ["#CCFBF1","#DBEAFE","#F3E8FF","#FFF7ED","#DCFCE7","#F1F5F9","#
 let ROLES = DEF_ROLES;
 const DEF_MIN = { doctor: 1, nurse: 3, reception: 3, tech: 1, pt: 3, assistant: 2 };
 const ALL_WORK=["early","day","late","morning","short"];
-const INIT_STAFF = [
-  { id: 1, name: "田中 一郎", role: "doctor", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 2, name: "佐藤 美咲", role: "doctor", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 3, name: "鈴木 健太", role: "doctor", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 4, name: "山田 花子", role: "nurse", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 5, name: "伊藤 真理", role: "nurse", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 6, name: "渡辺 由美", role: "nurse", empType: "shorttime", allowedShifts: ["morning","short"] },
-  { id: 7, name: "中村 愛", role: "nurse", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 8, name: "小林 直子", role: "nurse", empType: "shorttime", allowedShifts: ["morning","short"] },
-  { id: 9, name: "加藤 恵", role: "nurse", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 10, name: "吉田 裕子", role: "nurse", empType: "parttime", allowedShifts: ["morning","short","day"] },
-  { id: 11, name: "松本 さくら", role: "nurse", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 12, name: "高橋 幸子", role: "reception", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 13, name: "林 美穂", role: "reception", empType: "parttime", allowedShifts: ["morning","short"] },
-  { id: 14, name: "清水 陽子", role: "reception", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 15, name: "井上 真由美", role: "reception", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 16, name: "木村 太郎", role: "tech", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 17, name: "斎藤 浩", role: "tech", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 18, name: "前田 大輔", role: "pt", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 19, name: "藤田 健", role: "pt", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 20, name: "岡田 美和", role: "assistant", empType: "fulltime", allowedShifts: ["early","day","late"] },
-  { id: 21, name: "石井 智子", role: "assistant", empType: "parttime", allowedShifts: ["morning","short","day"] },
-  { id: 22, name: "長谷川 翔", role: "assistant", empType: "fulltime", allowedShifts: ["early","day","late"] },
-];
 
 const DOW = ["日","月","火","水","木","金","土"];
 const daysIn = (y,m) => new Date(y,m+1,0).getDate();
@@ -58,6 +37,8 @@ const dowN = (y,m,d) => new Date(y,m,d).getDay();
 const isSun = (y,m,d) => dowN(y,m,d)===0;
 const isSat = (y,m,d) => dowN(y,m,d)===6;
 const sk = (sid,y,m,d) => `${sid}-${y}-${m}-${d}`;
+const toDateStr = (y,m,d) => `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+const fromDateStr = (s) => { const [y,m0,d]=s.split('-').map(Number); return {y,m:m0-1,d}; };
 
 const PCSS = `@media print{@page{size:A4 landscape;margin:8mm}.no-print{display:none!important}.print-only{display:block!important}.print-table-wrap{overflow:visible!important;max-height:none!important;border:none!important}.print-table-wrap table{font-size:9px!important}.print-table-wrap th,.print-table-wrap td{padding:2px 3px!important;border:0.5px solid #ccc!important}}`;
 
@@ -66,11 +47,11 @@ function checkPV(sid,shifts,y,m,dim){const v=[];for(let d=1;d<=dim;d++){const s=
 function getDS(staff,shifts,y,m,d,minStaff){const counts={};Object.keys(ROLES).forEach(r=>{counts[r]=0;});staff.forEach(s=>{const sh=shifts[sk(s.id,y,m,d)];if(sh&&sh!=="off")counts[s.role]++;});const shortages=[];Object.entries(minStaff).forEach(([role,min])=>{if(counts[role]<min)shortages.push({role,current:counts[role],required:min,deficit:min-counts[role]});});return{counts,shortages};}
 
 /* ─── Small Components ─── */
-const RB=({role})=>{const r=ROLES[role];return <span style={{fontSize:10,fontWeight:600,padding:"1px 5px",borderRadius:4,color:r.color,background:r.bg,whiteSpace:"nowrap",WebkitPrintColorAdjust:"exact",printColorAdjust:"exact"}}>{r.label}</span>;};
+const RB=({role})=>{const r=ROLES[role];if(!r)return null;return <span style={{fontSize:10,fontWeight:600,padding:"1px 5px",borderRadius:4,color:r.color,background:r.bg,whiteSpace:"nowrap",WebkitPrintColorAdjust:"exact",printColorAdjust:"exact"}}>{r.label}</span>;};
 const SB=({type,shiftTypes,size="md"})=>{if(!type)return null;const st=shiftTypes[type];if(!st)return null;const s=size==="sm"?{width:22,height:18,fontSize:10,borderRadius:4}:{width:28,height:24,fontSize:12,borderRadius:5};return <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:600,color:st.color,background:st.bg,border:`1.5px solid ${st.border}`,letterSpacing:-0.5,WebkitPrintColorAdjust:"exact",printColorAdjust:"exact",...s}}>{st.label}</span>;};
 
 /* ─── Settings Panel ─── */
-function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinStaff,roles,setRoles,onClose}){
+function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinStaff,roles,setRoles,onClose,facilityId}){
   const[tab,setTab]=useState("staff");
   const[editId,setEditId]=useState(null);
   const[form,setForm]=useState({name:"",role:Object.keys(roles)[0]||"nurse"});
@@ -82,8 +63,22 @@ function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinS
   const workShiftKeys=Object.keys(shiftTypes).filter(k=>k!=="off");
   const startAdd=()=>{setForm({name:"",role:Object.keys(roles)[0]||"nurse",empType:"fulltime",allowedShifts:["early","day","late"]});setEditId("new");};
   const startEdit=(s)=>{setForm({name:s.name,role:s.role,empType:s.empType||"fulltime",allowedShifts:s.allowedShifts||workShiftKeys});setEditId(s.id);};
-  const save=()=>{if(!form.name.trim())return;if(editId==="new"){setStaff(p=>[...p,{id:nextId,...form}]);}else{setStaff(p=>p.map(s=>s.id===editId?{...s,...form}:s));}setEditId(null);};
-  const del=(id)=>{setStaff(p=>p.filter(s=>s.id!==id));};
+  const save=async()=>{
+    if(!form.name.trim())return;
+    if(editId==="new"){
+      const newS={id:nextId,name:form.name,role:form.role,empType:form.empType,allowedShifts:form.allowedShifts};
+      await supabase.from('staff_members').insert({id:nextId,facility_id:facilityId,name:form.name,role:form.role,emp_type:form.empType,allowed_shifts:form.allowedShifts,pin:'0000'});
+      setStaff(p=>[...p,newS]);
+    }else{
+      await supabase.from('staff_members').update({name:form.name,role:form.role,emp_type:form.empType,allowed_shifts:form.allowedShifts}).eq('id',editId);
+      setStaff(p=>p.map(s=>s.id===editId?{...s,...form}:s));
+    }
+    setEditId(null);
+  };
+  const del=async(id)=>{
+    await supabase.from('staff_members').delete().eq('id',id);
+    setStaff(p=>p.filter(s=>s.id!==id));
+  };
   const toggleAllowed=(key)=>{setForm(p=>{const cur=p.allowedShifts||[];return{...p,allowedShifts:cur.includes(key)?cur.filter(k=>k!==key):[...cur,key]};});};
   const applyPreset=(type)=>{
     if(type==="fulltime")setForm(p=>({...p,empType:"fulltime",allowedShifts:["early","day","late"]}));
@@ -93,7 +88,14 @@ function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinS
 
   const workShifts=Object.entries(shiftTypes).filter(([k])=>k!=="off");
   const startShiftEdit=(k,v)=>setShiftEdit({key:k,name:v.name,label:v.label,start:v.start,end:v.end});
-  const saveShift=()=>{if(!shiftEdit)return;const{key,...rest}=shiftEdit;const time=`${rest.start}:00-${rest.end}:00`;setShiftTypes(p=>({...p,[key]:{...p[key],...rest,time}}));setShiftEdit(null);};
+  const saveShift=async()=>{
+    if(!shiftEdit)return;
+    const{key,...rest}=shiftEdit;
+    const time=`${rest.start}:00-${rest.end}:00`;
+    await supabase.from('shift_types').update({label:rest.label,name:rest.name,start_hour:rest.start,end_hour:rest.end}).eq('facility_id',facilityId).eq('key',key);
+    setShiftTypes(p=>({...p,[key]:{...p[key],...rest,time}}));
+    setShiftEdit(null);
+  };
 
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -180,7 +182,7 @@ function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinS
                     <div style={{display:"flex",gap:3}}>{ROLE_COLORS.map((c,ci)=>(
                       <div key={ci} onClick={()=>setRoleEdit(p=>({...p,colorIdx:ci}))} style={{width:20,height:20,borderRadius:4,background:ROLE_BGS[ci],border:`2px solid ${roleEdit.colorIdx===ci?c:"transparent"}`,cursor:"pointer"}}/>
                     ))}</div>
-                    <button onClick={()=>{if(!roleEdit.label.trim())return;setRoles(p=>({...p,[k]:{label:roleEdit.label,color:ROLE_COLORS[roleEdit.colorIdx],bg:ROLE_BGS[roleEdit.colorIdx]}}));setRoleEdit(null);}} style={{...btnS,background:"#16A34A",color:"#FFF",border:"none",fontSize:10}}>保存</button>
+                    <button onClick={async()=>{if(!roleEdit.label.trim())return;const color=ROLE_COLORS[roleEdit.colorIdx],bg=ROLE_BGS[roleEdit.colorIdx];await supabase.from('roles').update({label:roleEdit.label,color,bg}).eq('facility_id',facilityId).eq('key',k);setRoles(p=>({...p,[k]:{label:roleEdit.label,color,bg}}));setRoleEdit(null);}} style={{...btnS,background:"#16A34A",color:"#FFF",border:"none",fontSize:10}}>保存</button>
                     <button onClick={()=>setRoleEdit(null)} style={{...btnS,fontSize:10}}>取消</button>
                   </div>
                 );
@@ -189,7 +191,7 @@ function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinS
                     <span style={{fontSize:10,fontWeight:600,padding:"1px 6px",borderRadius:4,color:v.color,background:v.bg}}>{v.label}</span>
                     <span style={{flex:1,fontSize:12,color:"#64748B"}}>{count}名在籍</span>
                     <button onClick={()=>{const ci=ROLE_COLORS.indexOf(v.color);setRoleEdit({key:k,label:v.label,colorIdx:ci>=0?ci:0});}} style={{...btnS,fontSize:10,padding:"2px 8px"}}>編集</button>
-                    {count===0&&<button onClick={()=>{setRoles(p=>{const n={...p};delete n[k];return n;});setMinStaff(p=>{const n={...p};delete n[k];return n;});}} style={{...btnS,fontSize:10,padding:"2px 8px",color:"#DC2626",border:"1px solid #FECACA"}}>削除</button>}
+                    {count===0&&<button onClick={async()=>{await supabase.from('roles').delete().eq('facility_id',facilityId).eq('key',k);await supabase.from('min_staff').delete().eq('facility_id',facilityId).eq('role_key',k);setRoles(p=>{const n={...p};delete n[k];return n;});setMinStaff(p=>{const n={...p};delete n[k];return n;});}} style={{...btnS,fontSize:10,padding:"2px 8px",color:"#DC2626",border:"1px solid #FECACA"}}>削除</button>}
                   </div>
                 );
               })}
@@ -202,7 +204,7 @@ function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinS
                 <div style={{display:"flex",gap:3}}>{ROLE_COLORS.map((c,ci)=>(
                   <div key={ci} onClick={()=>setNewRole(p=>({...p,colorIdx:ci}))} style={{width:18,height:18,borderRadius:3,background:ROLE_BGS[ci],border:`2px solid ${newRole.colorIdx===ci?c:"transparent"}`,cursor:"pointer"}}/>
                 ))}</div>
-                <button onClick={()=>{if(!newRole.key.trim()||!newRole.label.trim()||roles[newRole.key])return;setRoles(p=>({...p,[newRole.key]:{label:newRole.label,color:ROLE_COLORS[newRole.colorIdx],bg:ROLE_BGS[newRole.colorIdx]}}));setMinStaff(p=>({...p,[newRole.key]:0}));setNewRole({key:"",label:"",colorIdx:0});}} style={{...btnS,background:"#1D4ED8",color:"#FFF",border:"1px solid #1D4ED8",fontSize:10}}>追加</button>
+                <button onClick={async()=>{if(!newRole.key.trim()||!newRole.label.trim()||roles[newRole.key])return;const color=ROLE_COLORS[newRole.colorIdx],bg=ROLE_BGS[newRole.colorIdx];await supabase.from('roles').insert({facility_id:facilityId,key:newRole.key,label:newRole.label,color,bg});await supabase.from('min_staff').insert({facility_id:facilityId,role_key:newRole.key,minimum:0});setRoles(p=>({...p,[newRole.key]:{label:newRole.label,color,bg}}));setMinStaff(p=>({...p,[newRole.key]:0}));setNewRole({key:"",label:"",colorIdx:0});}} style={{...btnS,background:"#1D4ED8",color:"#FFF",border:"1px solid #1D4ED8",fontSize:10}}>追加</button>
               </div>
               {newRole.key&&roles[newRole.key]&&<div style={{fontSize:10,color:"#DC2626",marginTop:4}}>このIDは既に使われています</div>}
             </div>
@@ -214,7 +216,7 @@ function SettingsPanel({staff,setStaff,shiftTypes,setShiftTypes,minStaff,setMinS
                 <div key={k} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,border:"1px solid #E2E8F0"}}>
                   <RB role={k}/><span style={{flex:1,fontSize:13,fontWeight:500}}>{v.label}</span>
                   <label style={{fontSize:12,color:"#475569"}}>最低
-                    <input type="number" value={minStaff[k]||0} onChange={e=>setMinStaff(p=>({...p,[k]:Math.max(0,+e.target.value)}))} min={0} max={20} style={{width:44,padding:"4px 6px",borderRadius:4,border:"1px solid #CBD5E1",fontSize:13,marginLeft:6,textAlign:"center"}}/>
+                    <input type="number" value={minStaff[k]||0} onChange={e=>{const val=Math.max(0,+e.target.value);setMinStaff(p=>({...p,[k]:val}));supabase.from('min_staff').upsert({facility_id:facilityId,role_key:k,minimum:val},{onConflict:'facility_id,role_key'}).then(()=>{});}} min={0} max={20} style={{width:44,padding:"4px 6px",borderRadius:4,border:"1px solid #CBD5E1",fontSize:13,marginLeft:6,textAlign:"center"}}/>
                   名</label>
                 </div>
               ))}
@@ -255,7 +257,6 @@ function SummaryView({staff,shifts,shiftTypes,year,month}){
 
   return(
     <div style={{margin:"0 12px 12px"}}>
-      {/* Summary cards */}
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
         <div style={{padding:"10px 16px",borderRadius:8,background:"#F0FDF4",border:"1.5px solid #BBF7D0",flex:1,minWidth:120}}>
           <div style={{fontSize:10,color:"#15803D",fontWeight:600}}>平均出勤日数</div>
@@ -270,8 +271,6 @@ function SummaryView({staff,shifts,shiftTypes,year,month}){
           <div style={{fontSize:22,fontWeight:700,color:"#9A3412"}}>{staff.length}<span style={{fontSize:12,fontWeight:500}}>名</span></div>
         </div>
       </div>
-
-      {/* Per-staff table */}
       <div style={{overflowX:"auto",border:"1px solid #E2E8F0",borderRadius:8}}>
         <table style={{borderCollapse:"collapse",width:"100%",fontSize:12}}>
           <thead><tr style={{background:"#F8FAFC"}}>
@@ -297,10 +296,10 @@ function SummaryView({staff,shifts,shiftTypes,year,month}){
                 {workKeys.map(k=><td key={k} style={{textAlign:"center",color:shiftTypes[k].color,fontWeight:600}}>{s.bySh[k]||"—"}</td>)}
                 <td style={{padding:"6px 10px"}}>
                   <div style={{display:"flex",alignItems:"center",gap:4}}>
-                    <div style={{width:60,height:8,background:"#E2E8F0",borderRadius:4,overflow:"hidden",position:"relative"}}>
-                      <div style={{position:"absolute",left:diff>=0?"50%":"auto",right:diff<0?"50%":"auto",width:`${barW/2}%`,height:"100%",background:overwork?"#EA580C":underwork?"#2563EB":"#94A3B8",borderRadius:4}}/>
+                    <span style={{fontSize:10,color:overwork?"#EA580C":underwork?"#2563EB":"#64748B",fontWeight:600,minWidth:30}}>{diff>0?"+":""}{diff.toFixed(1)}</span>
+                    <div style={{flex:1,height:6,background:"#F1F5F9",borderRadius:3,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:`${barW}%`,background:overwork?"#FB923C":underwork?"#60A5FA":"#94A3B8",borderRadius:3}}/>
                     </div>
-                    <span style={{fontSize:10,fontWeight:600,color:overwork?"#EA580C":underwork?"#2563EB":"#64748B",minWidth:30}}>{diff>0?"+":""}{Math.round(diff*10)/10}</span>
                   </div>
                 </td>
               </tr>;
@@ -312,7 +311,7 @@ function SummaryView({staff,shifts,shiftTypes,year,month}){
   );
 }
 
-/* ─── Monthly View (compact) ─── */
+/* ─── Monthly View ─── */
 function MonthlyView({staff,year,month,shifts,shiftTypes,onToggle,onDayClick,allV,selectedRole,dailyS,onBulkFill,prefData,showPrefOverlay}){
   const dim=daysIn(year,month);const filtered=selectedRole==="all"?staff:staff.filter(s=>s.role===selectedRole);
   const cycle=[null,...Object.keys(shiftTypes)];
@@ -322,58 +321,51 @@ function MonthlyView({staff,year,month,shifts,shiftTypes,onToggle,onDayClick,all
     <div className="print-table-wrap" style={{overflowX:"auto",overflowY:"auto",maxHeight:"calc(100vh - 320px)",margin:"0 12px 12px",border:"1px solid var(--grid)",borderRadius:8}}>
       <table style={{borderCollapse:"collapse",width:"max-content",fontSize:13}}>
         <thead><tr>
-          <th style={{position:"sticky",left:0,top:0,zIndex:4,background:"var(--sf2)",padding:"6px 8px",borderRight:"2px solid var(--gs)",borderBottom:"2px solid var(--gs)",fontSize:11,fontWeight:700,color:"var(--t2)",minWidth:160,textAlign:"left"}}>スタッフ</th>
+          <th style={{position:"sticky",left:0,top:0,zIndex:4,background:"#F8FAFC",padding:"8px 10px",borderRight:"2px solid #CBD5E1",borderBottom:"2px solid #CBD5E1",fontSize:11,fontWeight:700,color:"#475569",minWidth:140,textAlign:"left"}}>スタッフ</th>
           {Array.from({length:dim},(_,i)=>{const d=i+1,su=isSun(year,month,d),sa=isSat(year,month,d);const ds2=dailyS[d],hs=ds2&&ds2.shortages.length>0;
-            return <th key={d} onClick={()=>onDayClick(d)} style={{position:"sticky",top:0,zIndex:3,background:hs?"#FFF7ED":su?"#FEF2F2":sa?"#FFF7ED":"var(--sf2)",padding:"4px 2px",minWidth:38,textAlign:"center",borderRight:"1px solid var(--grid)",borderBottom:"2px solid var(--gs)",cursor:"pointer",WebkitPrintColorAdjust:"exact",printColorAdjust:"exact"}}>
-              <div style={{fontSize:12,fontWeight:700,color:su?"#DC2626":sa?"#EA580C":"var(--tx)"}}>{d}</div>
-              <div style={{fontSize:10,color:su?"#EF4444":sa?"#F97316":"var(--t2)"}}>{DOW[dowN(year,month,d)]}</div>
+            return <th key={d} onClick={()=>onDayClick(d)} style={{position:"sticky",top:0,zIndex:3,background:hs?"#FFF7ED":su?"#FEF2F2":sa?"#FFF7ED":"#F8FAFC",padding:"6px 2px",minWidth:36,textAlign:"center",borderRight:"0.5px solid #E2E8F0",borderBottom:"2px solid #CBD5E1",cursor:"pointer"}}>
+              <div style={{fontSize:12,fontWeight:700,color:su?"#DC2626":sa?"#EA580C":"#0F172A"}}>{d}</div>
+              <div style={{fontSize:9,color:su?"#EF4444":sa?"#F97316":"#475569"}}>{DOW[dowN(year,month,d)]}</div>
+              {hs&&<div style={{fontSize:8,color:"#EA580C"}}>⚠</div>}
             </th>;
           })}
+          <th style={{position:"sticky",top:0,zIndex:3,background:"#F8FAFC",padding:"6px 8px",borderBottom:"2px solid #CBD5E1",fontSize:10,color:"#94A3B8",whiteSpace:"nowrap"}}>一括</th>
         </tr></thead>
         <tbody>
           {filtered.map(s=>{const vi=allV[s.id]||[],vSet=new Set(vi.map(v=>v.day)),vMap={};vi.forEach(v=>{vMap[v.day]=v.message;});
-            return <tr key={s.id}>
-              <td style={{position:"sticky",left:0,zIndex:2,padding:"4px 6px",background:"var(--sf)",borderRight:"2px solid var(--gs)",borderBottom:"1px solid var(--grid)",whiteSpace:"nowrap",minWidth:160,fontSize:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:3}}>
-                  <RB role={s.role}/>
-                  {s.empType&&s.empType!=="fulltime"&&EMP_TYPES[s.empType]&&<span style={{fontSize:8,fontWeight:600,padding:"0 3px",borderRadius:3,color:EMP_TYPES[s.empType].color,background:EMP_TYPES[s.empType].bg}}>{EMP_TYPES[s.empType].label}</span>}
-                  <span style={{fontWeight:500,color:"var(--tx)",flex:1}}>{s.name}</span>
-                  {vi.length>0&&<span style={{fontSize:10,color:"#EF4444",fontWeight:700}}>!</span>}
-                  <select className="no-print" onChange={e=>{if(e.target.value)onBulkFill(s.id,e.target.value);e.target.value="";}} defaultValue="" style={{width:20,height:18,opacity:0.4,cursor:"pointer",fontSize:10,border:"none",background:"transparent"}}>
+            return(
+              <tr key={s.id}>
+                <td style={{position:"sticky",left:0,zIndex:2,padding:"4px 8px",background:"#FFF",borderRight:"2px solid #CBD5E1",borderBottom:"0.5px solid #E2E8F0",whiteSpace:"nowrap"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}><RB role={s.role}/><span style={{fontWeight:500,fontSize:12}}>{s.name}</span></div>
+                </td>
+                {Array.from({length:dim},(_,i)=>{const d=i+1,key=sk(s.id,year,month,d),sh=shifts[key]||null,hasV=vSet.has(d);
+                  const pref=showPrefOverlay?prefData[key]:null;
+                  const prefMismatch=pref&&sh&&pref.pref1!==sh&&(!pref.pref2||pref.pref2!==sh);
+                  const su=isSun(year,month,d),sa=isSat(year,month,d);
+                  return <td key={d} onClick={()=>onToggle(s.id,d)} style={{textAlign:"center",padding:"2px 1px",borderRight:"0.5px solid #E2E8F0",borderBottom:"0.5px solid #E2E8F0",cursor:"pointer",background:hasV?"#FEF2F2":prefMismatch?"#FFF7ED":su?"#FEF9FF":sa?"#FEFCE8":"transparent",minWidth:36,height:28,position:"relative",WebkitPrintColorAdjust:"exact",printColorAdjust:"exact"}}>
+                    {sh?<SB type={sh} shiftTypes={shiftTypes}/>:<span style={{fontSize:10,color:"#CBD5E1"}}>—</span>}
+                    {hasV&&<span title={vMap[d]} style={{position:"absolute",top:1,right:1,fontSize:7,color:"#EF4444"}}>!</span>}
+                    {pref&&!sh&&<span style={{fontSize:7,color:"#94A3B8",position:"absolute",bottom:1,left:"50%",transform:"translateX(-50%)"}}>{pref.pref1?.slice(0,1)}</span>}
+                  </td>;
+                })}
+                <td style={{padding:"2px 4px",borderBottom:"0.5px solid #E2E8F0",whiteSpace:"nowrap"}}>
+                  <select onChange={e=>{if(e.target.value)onBulkFill(s.id,e.target.value);e.target.value="";}} defaultValue="" style={{fontSize:9,padding:"2px 2px",borderRadius:4,border:"1px solid #E2E8F0",background:"#F8FAFC",cursor:"pointer",color:"#475569"}}>
                     <option value="">⋯</option>
-                    {(s.allowedShifts||Object.keys(shiftTypes).filter(k=>k!=="off")).map(k=>shiftTypes[k]?<option key={k} value={k}>全日→{shiftTypes[k].name}</option>:null)}
-                    <option value="off">全日→休日</option>
+                    {Object.entries(shiftTypes).map(([k,v])=><option key={k} value={k}>{v.label}全日</option>)}
                     <option value="__clear">クリア</option>
                   </select>
-                </div>
-              </td>
-              {Array.from({length:dim},(_,i)=>{const d=i+1,key=sk(s.id,year,month,d),sh=shifts[key]||null,hasV=vSet.has(d);
-                const pref=showPrefOverlay&&prefData?prefData[key]:null;
-                const prefMismatch=pref&&sh&&pref.pref1!==sh&&(!pref.pref2||pref.pref2!==sh);
-                return <td key={d} onClick={()=>onToggle(s.id,d)} title={vMap[d]||(pref?`希望: ${shiftTypes[pref.pref1]?.name||pref.pref1}${pref.pref2?" / 第2:"+shiftTypes[pref.pref2]?.name:""}`:"")||(sh&&shiftTypes[sh]?`${shiftTypes[sh].name} ${shiftTypes[sh].time}`:"クリックで割当")} style={{minWidth:38,height:36,textAlign:"center",cursor:"pointer",position:"relative",userSelect:"none",padding:0,borderRight:"1px solid var(--grid)",borderBottom:"1px solid var(--grid)"}}>
-                  {sh&&<SB type={sh} shiftTypes={shiftTypes}/>}
-                  {hasV&&<span style={{position:"absolute",top:1,right:1,width:7,height:7,borderRadius:"50%",background:"#EF4444",WebkitPrintColorAdjust:"exact",printColorAdjust:"exact"}}/>}
-                  {pref&&<span style={{position:"absolute",bottom:1,right:1,fontSize:7,fontWeight:600,color:shiftTypes[pref.pref1]?.color||"#475569",background:shiftTypes[pref.pref1]?.bg||"#F1F5F9",borderRadius:2,padding:"0 2px",opacity:0.8,border:`0.5px solid ${shiftTypes[pref.pref1]?.border||"#CBD5E1"}`}}>{shiftTypes[pref.pref1]?.label||pref.pref1}</span>}
-                  {prefMismatch&&<span style={{position:"absolute",top:1,left:1,width:6,height:6,borderRadius:"50%",background:"#F59E0B"}}/>}
-                </td>;
-              })}
-            </tr>;
+                </td>
+              </tr>
+            );
           })}
         </tbody>
-        <tfoot>
-          <tr><td style={{position:"sticky",left:0,zIndex:2,padding:"4px 8px",background:"var(--sf2)",borderRight:"2px solid var(--gs)",borderTop:"2px solid var(--gs)",fontSize:10,fontWeight:700,color:"var(--t2)"}}>シフト別</td>
-            {ds.map((s,i)=><td key={i} style={{textAlign:"center",padding:"2px 1px",borderRight:"1px solid var(--grid)",borderTop:"2px solid var(--gs)",background:"var(--sf2)",fontSize:9,lineHeight:1.4,WebkitPrintColorAdjust:"exact",printColorAdjust:"exact"}}>
-              {Object.entries(s).filter(([k])=>k!=="off").map(([k,n])=>n>0?<div key={k} style={{color:shiftTypes[k]?.color,fontWeight:600}}>{shiftTypes[k]?.label}{n}</div>:null)}
-            </td>)}
-          </tr>
-          <tr><td style={{position:"sticky",left:0,zIndex:2,padding:"4px 8px",background:"var(--sf2)",borderRight:"2px solid var(--gs)",fontSize:10,fontWeight:700,color:"var(--t2)"}}>人員充足</td>
-            {Array.from({length:dim},(_,i)=>{const d=i+1,ds2=dailyS[d];const ok=ds2&&ds2.shortages.length===0;const w=ds2?Object.values(ds2.counts).reduce((a,b)=>a+b,0):0;
-              return <td key={i} style={{textAlign:"center",padding:"2px 1px",borderRight:"1px solid var(--grid)",background:"var(--sf2)",fontSize:9}}>
-                {w===0?<span style={{color:"var(--t2)"}}>—</span>:ok?<span style={{color:"#16A34A",fontWeight:700}}>✓</span>:<span style={{color:"#EA580C",fontWeight:700,cursor:"help"}} title={ds2.shortages.map(s=>`${ROLES[s.role].label} ${s.current}/${s.required}`).join("\n")}>▼{ds2.shortages.reduce((a,s)=>a+s.deficit,0)}</span>}
-              </td>;
-            })}
-          </tr>
-        </tfoot>
+        <tfoot><tr>
+          <td style={{position:"sticky",left:0,zIndex:2,padding:"4px 8px",background:"#F8FAFC",borderRight:"2px solid #CBD5E1",borderTop:"2px solid #CBD5E1",fontSize:9,fontWeight:600,color:"#475569"}}>人数</td>
+          {Array.from({length:dim},(_,i)=>{const d=i+1,ds2=dailyS[d];const ok=ds2&&ds2.shortages.length===0;const w=ds2?Object.values(ds2.counts).reduce((a,b)=>a+b,0):0;
+            return <td key={i} style={{textAlign:"center",padding:"2px 1px",borderRight:"0.5px solid #E2E8F0",borderTop:"2px solid #CBD5E1",background:!ok&&w>0?"#FFF7ED":"#F8FAFC",fontSize:9,fontWeight:600,color:!ok&&w>0?"#EA580C":"#475569"}}>{w||"—"}</td>;
+          })}
+          <td style={{borderTop:"2px solid #CBD5E1"}}/>
+        </tr></tfoot>
       </table>
     </div>
   );
@@ -381,100 +373,98 @@ function MonthlyView({staff,year,month,shifts,shiftTypes,onToggle,onDayClick,all
 
 /* ─── Daily View ─── */
 function DailyView({staff,year,month,day,shifts,shiftTypes,onToggle,dailyS,minStaff}){
-  const HS=6,HE=22,HN=HE-HS;
+  const HS=7,HN=14;
   const roleGroups=useMemo(()=>{const g={};staff.forEach(s=>{if(!g[s.role])g[s.role]=[];g[s.role].push(s);});return Object.entries(g);},[staff]);
   const ds=dailyS[day];const su=isSun(year,month,day),sa=isSat(year,month,day);
-
   return(
-    <div style={{margin:"0 12px 12px"}} className="no-print">
-      <div style={{padding:"12px 8px 8px",fontSize:22,fontWeight:700,color:su?"#DC2626":sa?"#EA580C":"var(--tx)"}}>{month+1}月{day}日（{DOW[dowN(year,month,day)]}）</div>
-      {ds&&<div style={{padding:"0 8px 12px",display:"flex",gap:6,flexWrap:"wrap"}}>
-        {Object.entries(ROLES).map(([role,info])=>{const count=ds.counts[role]||0,min=minStaff[role]||0,ok=count>=min;
-          return <div key={role} style={{padding:"6px 10px",borderRadius:8,fontSize:11,display:"flex",alignItems:"center",gap:6,background:ok?"#F0FDF4":"#FFF7ED",border:`1.5px solid ${ok?"#BBF7D0":"#FED7AA"}`}}>
-            <span style={{fontWeight:600,color:info.color}}>{info.label}</span>
-            <span style={{fontWeight:700,fontSize:14,color:ok?"#16A34A":"#EA580C"}}>{count}</span><span style={{color:"#475569"}}>/{min}</span>
-            {!ok&&<span style={{color:"#EA580C",fontWeight:700}}>不足{min-count}</span>}
-          </div>;
-        })}
-      </div>}
-      <div style={{overflowX:"auto",border:"1px solid #E2E8F0",borderRadius:8}}>
+    <div style={{margin:"0 12px 12px"}}>
+      <div style={{padding:"8px 12px",background:su?"#FEF2F2":sa?"#FFF7ED":"#F8FAFC",borderRadius:8,border:"1px solid #E2E8F0",marginBottom:12,display:"flex",gap:16,flexWrap:"wrap",fontSize:11}}>
+        {ds&&Object.entries(ds.counts).map(([role,cnt])=>{const min=minStaff[role]||0;const ok=cnt>=min;return <span key={role} style={{fontWeight:600,color:ok?"#15803D":"#DC2626"}}><RB role={role}/> {cnt}/{min}</span>;})}
+        {ds&&ds.shortages.length>0&&<span style={{color:"#DC2626",fontWeight:700}}>⚠ 人員不足</span>}
+      </div>
+      <div style={{overflowX:"auto"}}>
         <table style={{borderCollapse:"collapse",width:"100%",minWidth:700,fontSize:12}}>
-          <thead><tr>
-            <th style={{width:160,minWidth:160,padding:"8px 10px",textAlign:"left",background:"#F8FAFC",borderRight:"2px solid #CBD5E1",borderBottom:"2px solid #CBD5E1",fontSize:11,fontWeight:700,color:"#475569"}}>スタッフ</th>
-            <th style={{padding:"4px 0",background:"#F8FAFC",borderBottom:"2px solid #CBD5E1"}}><div style={{display:"flex",height:20}}>{Array.from({length:HN},(_,i)=><div key={i} style={{flex:1,textAlign:"center",fontSize:10,fontWeight:600,color:"#475569",borderLeft:i>0?"1px solid #E2E8F0":"none"}}>{HS+i}:00</div>)}</div></th>
+          <thead><tr style={{background:"#F8FAFC"}}>
+            <th style={{padding:"8px 12px",textAlign:"left",borderBottom:"2px solid #CBD5E1",width:140}}>スタッフ</th>
+            <th style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid #CBD5E1",width:60}}>シフト</th>
+            <th style={{padding:"8px 12px",textAlign:"left",borderBottom:"2px solid #CBD5E1"}}>
+              <div style={{display:"flex",fontSize:9,color:"#94A3B8"}}>
+                {Array.from({length:HN+1},(_,i)=><div key={i} style={{flex:1,textAlign:"left"}}>{HS+i}:00</div>)}
+              </div>
+            </th>
           </tr></thead>
-          <tbody>{roleGroups.map(([role,members])=>{const cnt=ds?ds.counts[role]:0,min=minStaff[role]||0,ok=cnt>=min;
-            return <React.Fragment key={role}>
-              <tr><td colSpan={2} style={{padding:"5px 10px",background:ok?"#F8FAFC":"#FFF7ED",borderBottom:"1px solid #E2E8F0"}}><div style={{display:"flex",alignItems:"center",gap:6}}><RB role={role}/><span style={{fontSize:11,fontWeight:600,color:"#475569"}}>出勤{cnt} / 最低{min}</span>{!ok&&<span style={{fontSize:10,fontWeight:700,color:"#EA580C",background:"#FED7AA",padding:"1px 6px",borderRadius:4}}>不足{min-cnt}</span>}</div></td></tr>
+          <tbody>
+            {roleGroups.map(([role,members])=><React.Fragment key={role}>
+              <tr><td colSpan={3} style={{padding:"6px 12px",background:"#F8FAFC",borderBottom:"1px solid #E2E8F0",fontWeight:700,fontSize:11,color:"#475569"}}><RB role={role}/><span style={{marginLeft:4}}>{members.length}名（最低{minStaff[role]||0}名）</span></td></tr>
               {members.map(s=>{const sh=shifts[sk(s.id,year,month,day)]||null,st=sh?shiftTypes[sh]:null;const barL=st&&sh!=="off"?((st.start-HS)/HN)*100:0;const barW=st&&sh!=="off"?((st.end-st.start)/HN)*100:0;
                 return <tr key={s.id} style={{borderBottom:"1px solid #E2E8F0"}}>
-                  <td style={{padding:"6px 10px",borderRight:"2px solid #CBD5E1",whiteSpace:"nowrap"}}><div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontWeight:500}}>{s.name}</span>{sh&&<SB type={sh} shiftTypes={shiftTypes} size="sm"/>}</div></td>
-                  <td style={{padding:"4px 0",position:"relative",height:32}} onClick={()=>onToggle(s.id,day)}>
-                    <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,display:"flex",cursor:"pointer"}}>{Array.from({length:HN},(_,i)=><div key={i} style={{flex:1,borderLeft:i>0?"1px solid #E2E8F0":"none"}}/>)}</div>
-                    {st&&sh!=="off"&&<div style={{position:"absolute",top:4,height:24,left:`${barL}%`,width:`${barW}%`,background:st.bg,border:`1.5px solid ${st.border}`,borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:600,color:st.color,zIndex:1,overflow:"hidden",whiteSpace:"nowrap"}}>{st.name} {st.time}</div>}
-                    {sh==="off"&&<div style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",fontSize:11,color:"#DC2626",fontWeight:600,zIndex:1}}>休日</div>}
-                    {!sh&&<div style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",fontSize:10,color:"#94A3B8",zIndex:1}}>未設定</div>}
+                  <td style={{padding:"6px 12px",fontWeight:500}}>{s.name}</td>
+                  <td style={{textAlign:"center",padding:"4px 6px"}} onClick={()=>onToggle(s.id,day)}>{sh?<SB type={sh} shiftTypes={shiftTypes}/>:<span style={{fontSize:11,color:"#CBD5E1",cursor:"pointer"}}>—</span>}</td>
+                  <td style={{padding:"4px 12px"}}>
+                    {st&&sh!=="off"&&<div style={{position:"relative",height:20,background:"#F1F5F9",borderRadius:4}}>
+                      <div style={{position:"absolute",left:`${barL}%`,width:`${barW}%`,height:"100%",background:st.bg,border:`1px solid ${st.border}`,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <span style={{fontSize:9,fontWeight:600,color:st.color,whiteSpace:"nowrap"}}>{st.name} {st.start}:00-{st.end}:00</span>
+                      </div>
+                    </div>}
+                    {sh==="off"&&<div style={{height:20,background:"#FEE2E2",borderRadius:4,display:"flex",alignItems:"center",paddingLeft:8}}><span style={{fontSize:9,fontWeight:600,color:"#DC2626"}}>休日</span></div>}
                   </td>
                 </tr>;
               })}
-            </React.Fragment>;
-          })}</tbody>
+            </React.Fragment>)}
+          </tbody>
         </table>
       </div>
     </div>
   );
 }
 
-/* ─── Sample Preference Data Generator ─── */
 function generateSamplePrefs(staff,y,m){
   const dim=daysIn(y,m);const prefs={};const ws=["early","day","late"];
   const unsubmitted=new Set([3,9,17,22]);
-  staff.forEach(s=>{
-    if(unsubmitted.has(s.id))return;
+  staff.forEach(s=>{if(unsubmitted.has(s.id))return;
     for(let d=1;d<=dim;d++){
       const key=sk(s.id,y,m,d);const r=Math.random();
       if(r<0.12){prefs[key]={pref1:"off",pref2:null};}
-      else if(r<0.16){prefs[key]={pref1:"ng",pref2:null};}
       else{const p1=ws[Math.floor(Math.random()*3)];const others=ws.filter(x=>x!==p1);const p2=Math.random()<0.4?others[Math.floor(Math.random()*others.length)]:null;prefs[key]={pref1:p1,pref2:p2};}
     }
   });
   return prefs;
 }
 
-/* ─── Preference Alerts ─── */
+const DEF_SHIFTS_REF = DEF_SHIFTS;
 function getPrefAlerts(staff,prefData,y,m,minStaff){
   const dim=daysIn(y,m);const alerts=[];
   const submitted=new Set();const total=staff.length;
   staff.forEach(s=>{for(let d=1;d<=dim;d++){if(prefData[sk(s.id,y,m,d)]){submitted.add(s.id);break;}}});
   const unsubmitted=staff.filter(s=>!submitted.has(s.id));
-  if(unsubmitted.length>0)alerts.push({type:"unsubmitted",severity:"warn",message:`未提出 ${unsubmitted.length}名: ${unsubmitted.map(s=>s.name).join("、")}`});
-
   for(let d=1;d<=dim;d++){
-    const roleCounts={};Object.keys(ROLES).forEach(r=>{roleCounts[r]={off:0,ng:0,total:0};});
     const shiftCounts={early:0,day:0,late:0};
+    const roleCounts={};Object.keys(ROLES).forEach(r=>{roleCounts[r]={off:0,ng:0,total:0};});
     staff.forEach(s=>{
       const p=prefData[sk(s.id,y,m,d)];
+      const role=s.role;if(!roleCounts[role])roleCounts[role]={off:0,ng:0,total:0};
+      roleCounts[role].total++;
       if(!p)return;
-      if(p.pref1==="off")roleCounts[s.role].off++;
-      if(p.pref1==="ng")roleCounts[s.role].ng++;
+      if(p.pref1==="off"||p.pref1==="ng")roleCounts[role][p.pref1==="ng"?"ng":"off"]++;
       if(p.pref1==="early"||p.pref1==="day"||p.pref1==="late")shiftCounts[p.pref1]++;
-      roleCounts[s.role].total++;
     });
     Object.entries(minStaff).forEach(([role,min])=>{
+      if(!min)return;
       const rc=roleCounts[role];const roleStaff=staff.filter(s=>s.role===role).length;
+      if(!rc)return;
       const available=roleStaff-rc.off-rc.ng;
-      if(available<min)alerts.push({type:"shortage",severity:"error",day:d,message:`${d}日: ${ROLES[role].label} 休+NG=${rc.off+rc.ng}名 → 出勤可能${available}名（最低${min}名）`});
+      if(available<min)alerts.push({type:"shortage",severity:"error",day:d,message:`${d}日: ${ROLES[role]?.label}休+NG=${rc.off+rc.ng}名 → 出勤可能${available}名（最低${min}名）`});
     });
     ["early","day","late"].forEach(sh=>{
       if(shiftCounts[sh]===0&&(shiftCounts.early+shiftCounts.day+shiftCounts.late)>0)
-        alerts.push({type:"noshift",severity:"warn",day:d,message:`${d}日: ${DEF_SHIFTS[sh]?.name||sh}の希望者ゼロ`});
+        alerts.push({type:"noshift",severity:"warn",day:d,message:`${d}日: ${DEF_SHIFTS_REF[sh]?.name||sh}の希望者ゼロ`});
     });
   }
   return{alerts,submitted:submitted.size,total,unsubmitted};
 }
 
 /* ─── Preference View ─── */
-function PrefView({staff,year,month,prefData,setPrefData,shiftTypes,minStaff,onDayClick}){
+function PrefView({staff,year,month,prefData,shiftTypes,minStaff,onDayClick}){
   const dim=daysIn(year,month);
   const alertInfo=useMemo(()=>getPrefAlerts(staff,prefData,year,month,minStaff),[staff,prefData,year,month,minStaff]);
   const pct=staff.length?Math.round(alertInfo.submitted/staff.length*100):0;
@@ -492,7 +482,6 @@ function PrefView({staff,year,month,prefData,setPrefData,shiftTypes,minStaff,onD
 
   return(
     <div style={{margin:"0 12px 12px"}}>
-      {/* Submission progress */}
       <div style={{padding:"10px 14px",background:"#F8FAFC",borderRadius:8,border:"1px solid #E2E8F0",marginBottom:10}}>
         <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569"}}>
           <span style={{fontWeight:500}}>提出状況</span>
@@ -503,8 +492,6 @@ function PrefView({staff,year,month,prefData,setPrefData,shiftTypes,minStaff,onD
         </div>
         {alertInfo.unsubmitted.length>0&&<div style={{fontSize:10,color:"#EA580C"}}>未提出: {alertInfo.unsubmitted.map(s=>s.name).join("、")}</div>}
       </div>
-
-      {/* Alerts */}
       {alertInfo.alerts.filter(a=>a.type!=="unsubmitted").length>0&&(
         <div style={{padding:"10px 14px",background:"#FFF7ED",borderRadius:8,border:"1px solid #FED7AA",marginBottom:10,maxHeight:120,overflowY:"auto"}}>
           <div style={{fontSize:11,fontWeight:600,color:"#9A3412",marginBottom:4}}>競合アラート {alertInfo.alerts.filter(a=>a.type!=="unsubmitted").length}件</div>
@@ -513,8 +500,6 @@ function PrefView({staff,year,month,prefData,setPrefData,shiftTypes,minStaff,onD
           ))}
         </div>
       )}
-
-      {/* Grid */}
       <div style={{overflowX:"auto",border:"1px solid #E2E8F0",borderRadius:8}}>
         <table style={{borderCollapse:"collapse",width:"max-content",fontSize:11}}>
           <thead><tr>
@@ -567,78 +552,139 @@ function PrefView({staff,year,month,prefData,setPrefData,shiftTypes,minStaff,onD
           </tr></tfoot>
         </table>
       </div>
-
-      {/* Generate sample button */}
-      <div style={{padding:"10px 0",textAlign:"center"}}>
-        <button onClick={()=>setPrefData(generateSamplePrefs(staff,year,month))} style={{padding:"6px 14px",borderRadius:6,border:"1px solid #E2E8F0",background:"#F8FAFC",cursor:"pointer",fontSize:11,fontWeight:600,color:"#475569"}}>デモ: サンプル希望データを生成</button>
-      </div>
     </div>
   );
 }
 
 /* ─── Main App ─── */
-export default function ShiftManager(){
+export default function ShiftManager({onSignOut}){
   const today=new Date();
   const[year,setYear]=useState(today.getFullYear());
   const[month,setMonth]=useState(today.getMonth());
-  const lsGet=(key,def)=>{try{const v=localStorage.getItem(key);return v!=null?JSON.parse(v):def;}catch{return def;}};
-  const lsSet=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{}};
-  const[shifts,setShifts]=useState(()=>lsGet('shift_demo_shifts',{}));
-  const[staff,setStaff]=useState(()=>lsGet('shift_demo_staff',INIT_STAFF));
-  const[shiftTypes,setShiftTypes]=useState(()=>lsGet('shift_demo_shiftTypes',DEF_SHIFTS));
-  const[minStaff,setMinStaff]=useState(()=>lsGet('shift_demo_minStaff',DEF_MIN));
-  const[roles,setRoles]=useState(()=>lsGet('shift_demo_roles',DEF_ROLES));
+  const[loading,setLoading]=useState(true);
+
+  const[shifts,setShifts]=useState({});
+  const[staff,setStaff]=useState([]);
+  const[shiftTypes,setShiftTypes]=useState(DEF_SHIFTS);
+  const[minStaff,setMinStaff]=useState({});
+  const[roles,setRoles]=useState(DEF_ROLES);
   ROLES=roles;
+
+  /* shiftsRef: useCallback内でstaleにならないようにrefで持つ */
+  const shiftsRef=useRef({});
+  useEffect(()=>{shiftsRef.current=shifts;},[shifts]);
+
   const[selectedRole,setSelectedRole]=useState("all");
   const[view,setView]=useState("monthly");
   const[selectedDay,setSelectedDay]=useState(today.getDate());
   const[weekStart,setWeekStart]=useState(()=>Math.max(1,today.getDate()-today.getDay()));
   const[showAlerts,setShowAlerts]=useState(false);
   const[showSettings,setShowSettings]=useState(false);
-  const[lockedMonths,setLockedMonths]=useState(()=>lsGet('shift_demo_lockedMonths',{}));
+  const[lockedMonths,setLockedMonths]=useState({});
   const[showAuthDialog,setShowAuthDialog]=useState(null);
-  const[prefData,setPrefData]=useState(()=>lsGet('shift_demo_prefData',{}));
+  const[prefData,setPrefData]=useState({});
   const[showPrefOverlay,setShowPrefOverlay]=useState(false);
-  const[collections,setCollections]=useState(()=>lsGet('shift_demo_collections',{}));
-  const[modRequests,setModRequests]=useState(()=>lsGet('shift_demo_modRequests',[]));
+  const[collections,setCollections]=useState({});
+  const[modRequests,setModRequests]=useState([]);
   const[showCollectionDialog,setShowCollectionDialog]=useState(false);
   const[collectionForm,setCollectionForm]=useState({targetYear:today.getFullYear(),targetMonth:today.getMonth()+1,deadline:""});
-  const ADMIN_PW="admin123";
-  useEffect(()=>{lsSet('shift_demo_shifts',shifts);},[shifts]);
-  useEffect(()=>{lsSet('shift_demo_staff',staff);},[staff]);
-  useEffect(()=>{lsSet('shift_demo_shiftTypes',shiftTypes);},[shiftTypes]);
-  useEffect(()=>{lsSet('shift_demo_minStaff',minStaff);},[minStaff]);
-  useEffect(()=>{lsSet('shift_demo_roles',roles);},[roles]);
-  useEffect(()=>{lsSet('shift_demo_lockedMonths',lockedMonths);},[lockedMonths]);
-  useEffect(()=>{lsSet('shift_demo_prefData',prefData);},[prefData]);
-  useEffect(()=>{lsSet('shift_demo_collections',collections);},[collections]);
-  useEffect(()=>{lsSet('shift_demo_modRequests',modRequests);},[modRequests]);
-  const monthKey=`${year}-${month}`;
-  const isLocked=!!lockedMonths[monthKey];
-  const isTempUnlocked=lockedMonths[monthKey]==="temp";
 
+  /* ── CSS for print ── */
   useEffect(()=>{const id="shift-pcss";if(!document.getElementById(id)){const s=document.createElement("style");s.id=id;s.textContent=PCSS;document.head.appendChild(s);}},[]);
 
+  /* ── Data loading ── */
+  const loadStaff=async()=>{
+    const{data}=await supabase.from('staff_members').select('*').eq('facility_id',FID).order('id');
+    if(data)setStaff(data.map(s=>({id:s.id,name:s.name,role:s.role,empType:s.emp_type,allowedShifts:s.allowed_shifts})));
+  };
+
+  const loadShiftTypes=async()=>{
+    const{data}=await supabase.from('shift_types').select('*').eq('facility_id',FID);
+    if(data){const obj={};data.forEach(s=>{obj[s.key]={label:s.label,name:s.name,start:s.start_hour,end:s.end_hour,time:s.start_hour?`${s.start_hour}:00-${s.end_hour}:00`:'',color:s.color,bg:s.bg,border:s.border_color};});setShiftTypes(obj);}
+  };
+
+  const loadRoles=async()=>{
+    const{data}=await supabase.from('roles').select('*').eq('facility_id',FID);
+    if(data){const obj={};data.forEach(r=>{obj[r.key]={label:r.label,color:r.color,bg:r.bg};});setRoles(obj);ROLES=obj;}
+  };
+
+  const loadMinStaff=async()=>{
+    const{data}=await supabase.from('min_staff').select('*').eq('facility_id',FID);
+    if(data){const obj={};data.forEach(m=>{obj[m.role_key]=m.minimum;});setMinStaff(obj);}
+  };
+
+  const loadLockedMonths=async()=>{
+    const{data}=await supabase.from('locked_months').select('*').eq('facility_id',FID);
+    if(data){const obj={};data.forEach(l=>{obj[`${l.year}-${l.month}`]=l.status;});setLockedMonths(obj);}
+  };
+
+  const loadCollections=async()=>{
+    const{data}=await supabase.from('collections').select('*').eq('facility_id',FID);
+    if(data){const obj={};data.forEach(c=>{obj[`${c.target_year}-${c.target_month}`]={id:c.id,status:c.status,targetYear:c.target_year,targetMonth:c.target_month,deadline:c.deadline,startedAt:c.started_at};});setCollections(obj);}
+  };
+
+  const loadModRequests=async()=>{
+    const{data}=await supabase.from('mod_requests').select('*,collections(target_year,target_month)').eq('facility_id',FID).order('created_at',{ascending:false});
+    if(data)setModRequests(data.map(r=>({id:r.id,staffId:r.staff_id,targetYear:r.collections?.target_year,targetMonth:r.collections?.target_month,day:r.day,newPref1:r.new_pref1,newPref2:r.new_pref2,reason:r.reason,status:r.status})));
+  };
+
+  const loadShifts=async(y=year,m=month)=>{
+    const startDate=toDateStr(y,m,1);
+    const endDate=toDateStr(y,m,daysIn(y,m));
+    const{data}=await supabase.from('shift_assignments').select('staff_id,date,shift_type').eq('facility_id',FID).gte('date',startDate).lte('date',endDate);
+    if(data){const obj={};data.forEach(a=>{const{y:ay,m:am,d:ad}=fromDateStr(a.date);obj[sk(a.staff_id,ay,am,ad)]=a.shift_type;});setShifts(obj);shiftsRef.current=obj;}
+  };
+
+  const loadPrefData=async()=>{
+    const{data}=await supabase.from('pref_data').select('staff_id,date,pref1,pref2').eq('facility_id',FID);
+    if(data){const obj={};data.forEach(p=>{const{y,m,d}=fromDateStr(p.date);obj[sk(p.staff_id,y,m,d)]={pref1:p.pref1,pref2:p.pref2};});setPrefData(obj);}
+  };
+
+  const loadAll=async()=>{
+    setLoading(true);
+    await Promise.all([loadStaff(),loadShiftTypes(),loadRoles(),loadMinStaff(),loadLockedMonths(),loadCollections(),loadModRequests(),loadPrefData()]);
+    await loadShifts();
+    setLoading(false);
+  };
+
+  useEffect(()=>{loadAll();},[]);
+  useEffect(()=>{if(!loading)loadShifts();},[year,month]);
+
+  /* ── Computed ── */
   const dim=daysIn(year,month);
   const shiftCycle=useMemo(()=>[null,...Object.keys(shiftTypes)],[shiftTypes]);
   const allV=useMemo(()=>{const r={};staff.forEach(s=>{r[s.id]=checkPV(s.id,shifts,year,month,dim);});return r;},[staff,shifts,year,month,dim]);
   const dailyS=useMemo(()=>{const r={};for(let d=1;d<=dim;d++)r[d]=getDS(staff,shifts,year,month,d,minStaff);return r;},[staff,shifts,year,month,dim,minStaff]);
-
   const totalPV=Object.values(allV).reduce((a,v)=>a+v.length,0);
   const totalSV=Object.values(dailyS).filter(ds=>ds.shortages.length>0&&Object.values(ds.counts).reduce((a,b)=>a+b,0)>0).length;
   const totalA=totalPV+totalSV;
 
+  const monthKey=`${year}-${month}`;
+  const isLocked=!!lockedMonths[monthKey];
+  const isTempUnlocked=lockedMonths[monthKey]==="temp";
+
+  /* ── Handlers ── */
   const handleToggle=useCallback((sid,d)=>{
     if(isLocked&&!isTempUnlocked){setShowAuthDialog("edit");return;}
     const s=staff.find(x=>x.id===sid);
     const allowed=s?.allowedShifts||Object.keys(shiftTypes).filter(k=>k!=="off");
     const staffCycle=[null,...allowed,"off"];
-    setShifts(prev=>{const key=sk(sid,year,month,d),cur=prev[key]||null;const idx=staffCycle.indexOf(cur);const next=staffCycle[(idx+1)%staffCycle.length];if(next===null){const c={...prev};delete c[key];return c;}return{...prev,[key]:next};});
+    const key=sk(sid,year,month,d);
+    const cur=shiftsRef.current[key]||null;
+    const idx=staffCycle.indexOf(cur);
+    const next=staffCycle[(idx+1)%staffCycle.length];
+    setShifts(prev=>{if(next===null){const c={...prev};delete c[key];return c;}return{...prev,[key]:next};});
+    const dateStr=toDateStr(year,month,d);
+    if(next===null){supabase.from('shift_assignments').delete().eq('facility_id',FID).eq('staff_id',sid).eq('date',dateStr).then(()=>{});}
+    else{supabase.from('shift_assignments').upsert({facility_id:FID,staff_id:sid,date:dateStr,shift_type:next},{onConflict:'facility_id,staff_id,date'}).then(()=>{});}
   },[year,month,shiftTypes,isLocked,isTempUnlocked,staff]);
 
   const handleBulkFill=useCallback((sid,type)=>{
     if(isLocked&&!isTempUnlocked){setShowAuthDialog("edit");return;}
     setShifts(prev=>{const n={...prev};for(let d=1;d<=dim;d++){const key=sk(sid,year,month,d);if(type==="__clear")delete n[key];else n[key]=type;}return n;});
+    const startDate=toDateStr(year,month,1);const endDate=toDateStr(year,month,dim);
+    if(type==="__clear"){supabase.from('shift_assignments').delete().eq('facility_id',FID).eq('staff_id',sid).gte('date',startDate).lte('date',endDate).then(()=>{});}
+    else{const rows=[];for(let d=1;d<=dim;d++)rows.push({facility_id:FID,staff_id:sid,date:toDateStr(year,month,d),shift_type:type});supabase.from('shift_assignments').upsert(rows,{onConflict:'facility_id,staff_id,date'}).then(()=>{});}
   },[year,month,dim,isLocked,isTempUnlocked]);
 
   const handleDayClick=(d)=>{setSelectedDay(d);setView("daily");};
@@ -646,7 +692,15 @@ export default function ShiftManager(){
   const copyPrevMonth=()=>{
     if(isLocked&&!isTempUnlocked){setShowAuthDialog("edit");return;}
     const pm=month===0?11:month-1;const py=month===0?year-1:year;const pdim=daysIn(py,pm);
-    setShifts(prev=>{const n={...prev};staff.forEach(s=>{for(let d=1;d<=Math.min(dim,pdim);d++){const pk=sk(s.id,py,pm,d);const nk=sk(s.id,year,month,d);if(prev[pk]&&!prev[nk])n[nk]=prev[pk];}});return n;});
+    const doCopy=async()=>{
+      const{data}=await supabase.from('shift_assignments').select('staff_id,date,shift_type').eq('facility_id',FID).gte('date',toDateStr(py,pm,1)).lte('date',toDateStr(py,pm,pdim));
+      if(!data)return;
+      const prevS={};data.forEach(a=>{const{y:ay,m:am,d:ad}=fromDateStr(a.date);prevS[sk(a.staff_id,ay,am,ad)]=a.shift_type;});
+      const newRows=[];
+      setShifts(prev=>{const n={...prev};staff.forEach(s=>{for(let d=1;d<=Math.min(dim,pdim);d++){const pk=sk(s.id,py,pm,d);const nk=sk(s.id,year,month,d);if(prevS[pk]&&!n[nk]){n[nk]=prevS[pk];newRows.push({facility_id:FID,staff_id:s.id,date:toDateStr(year,month,d),shift_type:prevS[pk]});}}});return n;});
+      if(newRows.length>0)await supabase.from('shift_assignments').upsert(newRows,{onConflict:'facility_id,staff_id,date'});
+    };
+    doCopy();
   };
 
   const prevP=()=>{if(view==="monthly"){if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1);}
@@ -660,76 +714,118 @@ export default function ShiftManager(){
 
   const periodLabel=view==="monthly"||view==="summary"||view==="prefs"?`${year}年 ${month+1}月`:view==="weekly"?`${month+1}/${weekStart}〜${month+1}/${Math.min(weekStart+6,dim)}`:`${year}年 ${month+1}月${selectedDay}日（${DOW[dowN(year,month,selectedDay)]}）`;
 
-  const autoFill=()=>{const n={...shifts};const wk=Object.keys(shiftTypes).filter(k=>k!=="off");staff.forEach(s=>{for(let d=1;d<=dim;d++){const key=sk(s.id,year,month,d);if(!n[key]){if(isSun(year,month,d))n[key]=Math.random()>0.5?"off":wk[Math.floor(Math.random()*wk.length)];else{const r=Math.random();n[key]=r<0.15?"off":wk[Math.floor(Math.random()*wk.length)];}}}});setShifts(n);};
+  const autoFill=()=>{
+    const n={...shiftsRef.current};const wk=Object.keys(shiftTypes).filter(k=>k!=="off");const rows=[];
+    staff.forEach(s=>{for(let d=1;d<=dim;d++){const key=sk(s.id,year,month,d);if(!n[key]){const shift=isSun(year,month,d)?(Math.random()>0.5?"off":wk[Math.floor(Math.random()*wk.length)]):(Math.random()<0.15?"off":wk[Math.floor(Math.random()*wk.length)]);n[key]=shift;rows.push({facility_id:FID,staff_id:s.id,date:toDateStr(year,month,d),shift_type:shift});}}});
+    setShifts(n);
+    if(rows.length>0)supabase.from('shift_assignments').upsert(rows,{onConflict:'facility_id,staff_id,date'}).then(()=>{});
+  };
+
+  const clearShifts=()=>{
+    setShifts({});
+    supabase.from('shift_assignments').delete().eq('facility_id',FID).gte('date',toDateStr(year,month,1)).lte('date',toDateStr(year,month,dim)).then(()=>{});
+  };
 
   const handlePrint=()=>{setView("monthly");setSelectedRole("all");setTimeout(()=>window.print(),200);};
 
+  /* ── Collections ── */
   const activeCollections=useMemo(()=>Object.entries(collections).filter(([,c])=>c.status==="collecting"||c.status==="closed"),[collections]);
   const collectingCount=activeCollections.filter(([,c])=>c.status==="collecting").length;
   const canStartNew=collectingCount<2&&activeCollections.length<2;
   const getCollectionForMonth=(y,m)=>collections[`${y}-${m}`];
   const curCollection=getCollectionForMonth(year,month);
 
-  const saveCollections=(next)=>{try{localStorage.setItem('shift_demo_collections',JSON.stringify(next));}catch{}setCollections(next);};
-  const startCollection=()=>{
+  const startCollection=async()=>{
     const{targetYear:ty,targetMonth:tm,deadline:dl}=collectionForm;
     const key=`${ty}-${tm-1}`;
     if(collections[key]&&collections[key].status!=="not_started")return;
-    saveCollections({...collections,[key]:{status:"collecting",deadline:dl||null,targetYear:ty,targetMonth:tm-1,startedAt:new Date().toISOString()}});
+    const{data}=await supabase.from('collections').insert({facility_id:FID,target_year:ty,target_month:tm-1,status:"collecting",deadline:dl||null}).select().single();
+    if(data)setCollections(p=>({...p,[key]:{id:data.id,status:"collecting",deadline:dl||null,targetYear:ty,targetMonth:tm-1,startedAt:data.started_at}}));
     setShowCollectionDialog(false);
   };
-  const closeCollection=(key)=>{saveCollections({...collections,[key]:{...collections[key],status:"closed"}});};
-  const reopenCollection=(key)=>{saveCollections({...collections,[key]:{...collections[key],status:"collecting"}});};
-  const approveModRequest=(idx)=>{
+  const closeCollection=async(key)=>{
+    const col=collections[key];if(!col)return;
+    await supabase.from('collections').update({status:"closed"}).eq('id',col.id);
+    setCollections(p=>({...p,[key]:{...p[key],status:"closed"}}));
+  };
+  const reopenCollection=async(key)=>{
+    const col=collections[key];if(!col)return;
+    await supabase.from('collections').update({status:"collecting"}).eq('id',col.id);
+    setCollections(p=>({...p,[key]:{...p[key],status:"collecting"}}));
+  };
+
+  /* ── Mod requests ── */
+  const approveModRequest=async(idx)=>{
     const req=modRequests[idx];if(!req)return;
     const key=sk(req.staffId,req.targetYear,req.targetMonth,req.day);
+    const colKey=`${req.targetYear}-${req.targetMonth}`;
+    const dateStr=toDateStr(req.targetYear,req.targetMonth,req.day);
+    await supabase.from('pref_data').upsert({facility_id:FID,staff_id:req.staffId,collection_id:collections[colKey]?.id,date:dateStr,pref1:req.newPref1,pref2:req.newPref2||null},{onConflict:'facility_id,staff_id,date'});
+    await supabase.from('mod_requests').update({status:"approved"}).eq('id',req.id);
     setPrefData(p=>({...p,[key]:{pref1:req.newPref1,pref2:req.newPref2||null}}));
     setModRequests(p=>p.map((r,i)=>i===idx?{...r,status:"approved"}:r));
   };
-  const rejectModRequest=(idx)=>{setModRequests(p=>p.map((r,i)=>i===idx?{...r,status:"rejected"}:r));};
+  const rejectModRequest=async(idx)=>{
+    const req=modRequests[idx];if(!req)return;
+    await supabase.from('mod_requests').update({status:"rejected"}).eq('id',req.id);
+    setModRequests(p=>p.map((r,i)=>i===idx?{...r,status:"rejected"}:r));
+  };
   const pendingMods=modRequests.filter(r=>r.status==="pending").length;
 
-  const handleLockMonth=()=>{setLockedMonths(p=>({...p,[monthKey]:"locked"}));};
-  const handleUnlockTemp=(pw)=>{
-    if(pw===ADMIN_PW){setLockedMonths(p=>({...p,[monthKey]:"temp"}));setShowAuthDialog(null);return true;}
-    return false;
+  /* ── Lock / unlock ── */
+  const handleLockMonth=async()=>{
+    const existing=lockedMonths[monthKey];
+    if(existing){await supabase.from('locked_months').update({status:"locked"}).eq('facility_id',FID).eq('year',year).eq('month',month);}
+    else{await supabase.from('locked_months').insert({facility_id:FID,year,month,status:"locked"});}
+    setLockedMonths(p=>({...p,[monthKey]:"locked"}));
   };
-  const handleRelockMonth=()=>{setLockedMonths(p=>({...p,[monthKey]:"locked"}));};
-  const handleFullUnlock=(pw)=>{
-    if(pw===ADMIN_PW){setLockedMonths(p=>{const n={...p};delete n[monthKey];return n;});setShowAuthDialog(null);return true;}
-    return false;
+  const handleUnlockTemp=async()=>{
+    const existing=lockedMonths[monthKey];
+    if(existing){await supabase.from('locked_months').update({status:"temp"}).eq('facility_id',FID).eq('year',year).eq('month',month);}
+    else{await supabase.from('locked_months').insert({facility_id:FID,year,month,status:"temp"});}
+    setLockedMonths(p=>({...p,[monthKey]:"temp"}));setShowAuthDialog(null);
+  };
+  const handleRelockMonth=async()=>{
+    await supabase.from('locked_months').update({status:"locked"}).eq('facility_id',FID).eq('year',year).eq('month',month);
+    setLockedMonths(p=>({...p,[monthKey]:"locked"}));
+  };
+  const handleFullUnlock=async()=>{
+    await supabase.from('locked_months').delete().eq('facility_id',FID).eq('year',year).eq('month',month);
+    setLockedMonths(p=>{const n={...p};delete n[monthKey];return n;});setShowAuthDialog(null);
   };
 
   const AuthDialog=()=>{
-    const[pw,setPw]=useState("");const[err,setErr]=useState(false);
     const mode=showAuthDialog;
-    const handleSubmit=()=>{
-      const ok=mode==="unlock"?handleFullUnlock(pw):handleUnlockTemp(pw);
-      if(!ok)setErr(true);
-    };
     return(
       <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.4)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
         <div style={{background:"#FFF",borderRadius:12,padding:24,width:"100%",maxWidth:380,boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
           <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>{mode==="unlock"?"シフト確定を解除":"確定済みシフトの編集"}</div>
-          <div style={{fontSize:12,color:"#475569",marginBottom:16}}>{mode==="unlock"?"確定を完全に解除します。管理者パスワードを入力してください。":"確定済みのシフトを一時的に編集可能にします。管理者パスワードを入力してください。"}</div>
-          <div style={{marginBottom:12}}>
-            <label style={{fontSize:11,fontWeight:600,color:"#475569",display:"block",marginBottom:4}}>管理者パスワード</label>
-            <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr(false);}} onKeyDown={e=>{if(e.key==="Enter")handleSubmit();}} placeholder="パスワードを入力" autoFocus style={{width:"100%",padding:"8px 12px",borderRadius:6,border:`1.5px solid ${err?"#EF4444":"#CBD5E1"}`,fontSize:13,boxSizing:"border-box"}}/>
-            {err&&<div style={{fontSize:11,color:"#EF4444",marginTop:4}}>パスワードが正しくありません</div>}
-          </div>
-          <div style={{fontSize:10,color:"#94A3B8",marginBottom:12}}>デモ用パスワード: admin123</div>
+          <div style={{fontSize:12,color:"#475569",marginBottom:20}}>{mode==="unlock"?"このシフトの確定を完全に解除します。この操作は取り消せません。":"確定済みのシフトを一時的に編集可能にします。調整後は再確定してください。"}</div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
             <button onClick={()=>setShowAuthDialog(null)} style={btnS}>キャンセル</button>
-            <button onClick={handleSubmit} style={{...btnS,background:"#1D4ED8",color:"#FFF",border:"1px solid #1D4ED8"}}>{mode==="unlock"?"確定解除":"認証して編集"}</button>
+            <button onClick={mode==="unlock"?handleFullUnlock:handleUnlockTemp} style={{...btnS,background:mode==="unlock"?"#DC2626":"#1D4ED8",color:"#FFF",border:"none"}}>{mode==="unlock"?"確定解除":"編集モードに入る"}</button>
           </div>
         </div>
       </div>
     );
   };
 
+  /* ── Loading screen ── */
+  if(loading){
+    return(
+      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#F8FAFC",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif"}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{width:40,height:40,border:"3px solid #DBEAFE",borderTop:"3px solid #1D4ED8",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 16px"}}/>
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+          <div style={{fontSize:14,color:"#475569"}}>データを読み込み中…</div>
+        </div>
+      </div>
+    );
+  }
+
   return(
     <div style={{"--sf":"#FFFFFF","--sf2":"#F8FAFC","--tx":"#0F172A","--t2":"#475569","--grid":"#E2E8F0","--gs":"#CBD5E1",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif",maxWidth:"100%",color:"var(--tx)",background:"var(--sf)",minHeight:"100vh"}}>
-      {showSettings&&<SettingsPanel staff={staff} setStaff={setStaff} shiftTypes={shiftTypes} setShiftTypes={setShiftTypes} minStaff={minStaff} setMinStaff={setMinStaff} roles={roles} setRoles={setRoles} onClose={()=>setShowSettings(false)}/>}
+      {showSettings&&<SettingsPanel staff={staff} setStaff={setStaff} shiftTypes={shiftTypes} setShiftTypes={setShiftTypes} minStaff={minStaff} setMinStaff={setMinStaff} roles={roles} setRoles={setRoles} onClose={()=>setShowSettings(false)} facilityId={FID}/>}
       {showAuthDialog&&<AuthDialog/>}
       {showCollectionDialog&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.4)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
         <div style={{background:"#FFF",borderRadius:12,padding:24,width:"100%",maxWidth:380}}>
@@ -770,10 +866,11 @@ export default function ShiftManager(){
       <div className="no-print" style={{padding:"12px 16px",borderBottom:"1px solid var(--grid)",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div><div style={{fontSize:18,fontWeight:700,letterSpacing:-0.5}}>シフト管理</div><div style={{fontSize:11,color:"var(--t2)",marginTop:1}}>クリニック ・ 管理者ビュー</div></div>
         <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+          {onSignOut&&<button onClick={onSignOut} style={{...btnS,fontSize:11,color:"#94A3B8",border:"1px solid #E2E8F0"}}>ログアウト</button>}
           <button onClick={()=>setShowSettings(true)} style={{...btnS,fontSize:13,padding:"4px 10px"}}>⚙ 設定</button>
           {!isLocked&&<button onClick={copyPrevMonth} style={btnS}>前月コピー</button>}
           {!isLocked&&<button onClick={autoFill} style={btnS}>自動仮入力</button>}
-          {!isLocked&&<button onClick={()=>setShifts({})} style={btnS}>クリア</button>}
+          {!isLocked&&<button onClick={clearShifts} style={btnS}>クリア</button>}
           <button onClick={handlePrint} style={{...btnS,background:"#1D4ED8",color:"#FFF",border:"1px solid #1D4ED8"}}>🖨 印刷</button>
           {!isLocked&&<button onClick={handleLockMonth} style={{...btnS,background:"#16A34A",color:"#FFF",border:"1px solid #16A34A"}}>✓ シフト確定</button>}
           {isLocked&&!isTempUnlocked&&<button onClick={()=>setShowAuthDialog("edit")} style={{...btnS,border:"1px solid #F59E0B",background:"#FFF7ED",color:"#B45309"}}>調整モード</button>}
@@ -787,7 +884,7 @@ export default function ShiftManager(){
       {isLocked&&!isTempUnlocked&&<div className="no-print" style={{margin:"0 16px",padding:"8px 14px",background:"#F0FDF4",border:"1.5px solid #BBF7D0",borderRadius:8,display:"flex",alignItems:"center",gap:8,fontSize:12}}>
         <span style={{fontSize:16}}>🔒</span>
         <span style={{fontWeight:700,color:"#166534"}}>{year}年{month+1}月のシフトは確定済みです</span>
-        <span style={{color:"#15803D"}}>編集するには「調整モード」から管理者認証が必要です</span>
+        <span style={{color:"#15803D"}}>編集するには「調整モード」ボタンを押してください</span>
       </div>}
       {isTempUnlocked&&<div className="no-print" style={{margin:"0 16px",padding:"8px 14px",background:"#FFF7ED",border:"1.5px solid #FED7AA",borderRadius:8,display:"flex",alignItems:"center",gap:8,fontSize:12}}>
         <span style={{fontSize:16}}>🔓</span>
@@ -823,7 +920,7 @@ export default function ShiftManager(){
         {modRequests.filter(r=>r.status==="pending").map((r,i)=>{const s=staff.find(x=>x.id===r.staffId);const realIdx=modRequests.indexOf(r);
           return <div key={i} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",borderBottom:"0.5px solid #FED7AA",flexWrap:"wrap"}}>
             <span style={{fontWeight:600,color:"#0F172A"}}>{s?.name||"?"}</span>
-            <span style={{color:"#9A3412"}}>{r.targetMonth+1}/{r.day}日: {shiftTypes[r.oldPref1]?.name||"?"}→{shiftTypes[r.newPref1]?.name||"?"}</span>
+            <span style={{color:"#9A3412"}}>{(r.targetMonth||0)+1}/{r.day}日 → {shiftTypes[r.newPref1]?.name||r.newPref1||"?"}</span>
             {r.reason&&<span style={{color:"#64748B",fontSize:10}}>「{r.reason}」</span>}
             <div style={{marginLeft:"auto",display:"flex",gap:4}}>
               <button onClick={()=>approveModRequest(realIdx)} style={{...btnS,fontSize:9,padding:"2px 8px",background:"#16A34A",color:"#FFF",border:"none"}}>承認</button>
@@ -886,7 +983,7 @@ export default function ShiftManager(){
       </table></div>}
       {view==="daily"&&<DailyView staff={staff} year={year} month={month} day={selectedDay} shifts={shifts} shiftTypes={shiftTypes} onToggle={handleToggle} dailyS={dailyS} minStaff={minStaff}/>}
       {view==="summary"&&<SummaryView staff={staff} shifts={shifts} shiftTypes={shiftTypes} year={year} month={month}/>}
-      {view==="prefs"&&<PrefView staff={staff} year={year} month={month} prefData={prefData} setPrefData={setPrefData} shiftTypes={shiftTypes} minStaff={minStaff} onDayClick={handleDayClick}/>}
+      {view==="prefs"&&<PrefView staff={staff} year={year} month={month} prefData={prefData} shiftTypes={shiftTypes} minStaff={minStaff} onDayClick={handleDayClick}/>}
 
       <div className="no-print" style={{padding:"8px 16px 16px",fontSize:11,color:"var(--t2)",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <span>セルクリック → {Object.values(shiftTypes).map(s=>s.name).join(" → ")} → 未設定 ｜ 行末 ⋯ で一括設定</span>

@@ -1,20 +1,23 @@
 import React, { useState, useEffect } from 'react'
 import ShiftManager from './pages/ShiftManager'
 import StaffShiftRequest from './pages/StaffShiftRequest'
-import { seedDemoStorage } from './demoSeed'
-
-/* 初回ロード時（またはリセット後）にデモデータを自動投入 */
-if (!localStorage.getItem('shift_demo_shifts')) {
-  seedDemoStorage()
-}
+import AdminLogin from './pages/AdminLogin'
+import { resetDemoData } from './lib/resetDemo'
+import { supabase } from './lib/supabase'
 
 function LandingPage() {
-  const handleReset = () => {
-    Object.keys(localStorage)
-      .filter(k => k.startsWith('shift_demo_'))
-      .forEach(k => localStorage.removeItem(k))
-    seedDemoStorage()
-    window.location.reload()
+  const [resetting, setResetting] = useState(false)
+
+  const handleReset = async () => {
+    if (!window.confirm('デモデータをリセットしますか？\n（スタッフが入力した希望データなども削除されます）')) return
+    setResetting(true)
+    try {
+      await resetDemoData()
+      window.location.reload()
+    } catch (e) {
+      alert('リセットに失敗しました: ' + e.message)
+      setResetting(false)
+    }
   }
 
   return (
@@ -78,9 +81,10 @@ function LandingPage() {
 
         <button
           onClick={handleReset}
-          style={{ fontSize: 11, color: '#94A3B8', marginTop: 24, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+          disabled={resetting}
+          style={{ fontSize: 11, color: '#94A3B8', marginTop: 24, background: 'none', border: 'none', cursor: resetting ? 'default' : 'pointer', textDecoration: 'underline', opacity: resetting ? 0.5 : 1 }}
         >
-          デモをリセット
+          {resetting ? 'リセット中…' : 'デモをリセット'}
         </button>
         <p style={{ fontSize: 11, color: '#94A3B8', marginTop: 8 }}>
           Powered by LFU Inc.
@@ -92,6 +96,8 @@ function LandingPage() {
 
 export default function App() {
   const [route, setRoute] = useState(window.location.hash || '#/')
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
 
   useEffect(() => {
     const onHash = () => setRoute(window.location.hash || '#/')
@@ -99,15 +105,35 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  if (route === '#/admin') return <div>
-    <a href="#/" style={{
-      position: 'fixed', top: 10, right: 16, zIndex: 999,
-      padding: '4px 12px', borderRadius: 6, background: '#F8FAFC',
-      border: '1px solid #E2E8F0', fontSize: 11, fontWeight: 600,
-      color: '#475569', textDecoration: 'none', cursor: 'pointer',
-    }}>← トップに戻る</a>
-    <ShiftManager />
-  </div>
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setAuthLoading(false)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    window.location.hash = '#/'
+  }
+
+  if (route === '#/admin') {
+    if (authLoading) return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 40, height: 40, border: '3px solid #DBEAFE', borderTop: '3px solid #1D4ED8', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 16px' }} />
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+          <div style={{ fontSize: 14, color: '#475569' }}>認証確認中…</div>
+        </div>
+      </div>
+    )
+    if (!session) return <AdminLogin />
+    return <ShiftManager onSignOut={handleSignOut} />
+  }
 
   if (route === '#/staff') return <div>
     <a href="#/" style={{
