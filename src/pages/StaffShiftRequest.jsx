@@ -1,4 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
+import { supabase } from "../lib/supabase";
+
+const FID = import.meta.env.VITE_FACILITY_ID;
 
 const SHIFT_TYPES = {
   early: { label: "早", name: "早番希望", color: "#B45309", bg: "#FEF3C7", border: "#F59E0B" },
@@ -11,60 +14,23 @@ const SHIFT_TYPES = {
 };
 const WORK_SHIFTS = ["early","day","late","morning","short"];
 
-const ROLES = {
-  doctor:{label:"医師",color:"#0F766E",bg:"#CCFBF1"},nurse:{label:"看護師",color:"#1D4ED8",bg:"#DBEAFE"},
-  reception:{label:"受付",color:"#7E22CE",bg:"#F3E8FF"},tech:{label:"検査技師",color:"#C2410C",bg:"#FFF7ED"},
-  pt:{label:"理学療法士",color:"#15803D",bg:"#DCFCE7"},assistant:{label:"看護助手",color:"#475569",bg:"#F1F5F9"},
-};
-const STAFF = [
-  {id:1,name:"田中 一郎",role:"doctor",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:2,name:"佐藤 美咲",role:"doctor",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:3,name:"鈴木 健太",role:"doctor",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:4,name:"山田 花子",role:"nurse",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:5,name:"伊藤 真理",role:"nurse",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:6,name:"渡辺 由美",role:"nurse",empType:"shorttime",allowedShifts:["morning","short"]},
-  {id:7,name:"中村 愛",role:"nurse",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:8,name:"小林 直子",role:"nurse",empType:"shorttime",allowedShifts:["morning","short"]},
-  {id:9,name:"加藤 恵",role:"nurse",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:10,name:"吉田 裕子",role:"nurse",empType:"parttime",allowedShifts:["morning","short","day"]},
-  {id:11,name:"松本 さくら",role:"nurse",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:12,name:"高橋 幸子",role:"reception",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:13,name:"林 美穂",role:"reception",empType:"parttime",allowedShifts:["morning","short"]},
-  {id:14,name:"清水 陽子",role:"reception",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:15,name:"井上 真由美",role:"reception",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:16,name:"木村 太郎",role:"tech",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:17,name:"斎藤 浩",role:"tech",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:18,name:"前田 大輔",role:"pt",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:19,name:"藤田 健",role:"pt",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:20,name:"岡田 美和",role:"assistant",empType:"fulltime",allowedShifts:["early","day","late"]},
-  {id:21,name:"石井 智子",role:"assistant",empType:"parttime",allowedShifts:["morning","short","day"]},
-  {id:22,name:"長谷川 翔",role:"assistant",empType:"fulltime",allowedShifts:["early","day","late"]},
-];
-
 const DOW=["日","月","火","水","木","金","土"];
 const daysIn=(y,m)=>new Date(y,m+1,0).getDate();
 const dowN=(y,m,d)=>new Date(y,m,d).getDay();
+const toDateStr=(y,m0,d)=>`${y}-${String(m0+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
 const PB=({type,size="md"})=>{if(!type||!SHIFT_TYPES[type])return null;const st=SHIFT_TYPES[type];const sz=size==="sm"?{width:20,height:16,fontSize:9,borderRadius:3}:size==="lg"?{width:36,height:30,fontSize:14,borderRadius:6}:{width:26,height:20,fontSize:10,borderRadius:4};return <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:600,color:st.color,background:st.bg,border:`1.5px solid ${st.border}`,letterSpacing:-0.5,...sz}}>{st.label}</span>;};
 
-/* 管理者がlocalStorageに保存したcollectionsを読み込む */
-function loadAdminCollections(){
-  try{
-    const stored=localStorage.getItem('shift_demo_collections');
-    if(stored){
-      const obj=JSON.parse(stored);
-      return Object.values(obj)
-        .filter(c=>c.status==="collecting"||c.status==="closed")
-        .sort((a,b)=>a.targetYear!==b.targetYear?a.targetYear-b.targetYear:a.targetMonth-b.targetMonth);
-    }
-  }catch{}
-  return [];
-}
-
 /* ─── Auth ─── */
-function TokenAuth({onAuth}){
+function TokenAuth({staffList,onAuth}){
   const[staffId,setStaffId]=useState("");const[pw,setPw]=useState("");const[error,setError]=useState("");
-  const handleLogin=()=>{const id=parseInt(staffId,10);const found=STAFF.find(s=>s.id===id);if(!found){setError("該当するスタッフIDが見つかりません");return;}if(pw!=="0000"&&pw!==String(id).padStart(4,"0")){setError("パスワードが正しくありません");return;}setError("");onAuth(found);};
+  const handleLogin=()=>{
+    const id=parseInt(staffId,10);
+    const found=staffList.find(s=>s.id===id);
+    if(!found){setError("該当するスタッフIDが見つかりません");return;}
+    if(pw!=="0000"&&pw!==String(id).padStart(4,"0")){setError("パスワードが正しくありません");return;}
+    setError("");onAuth(found);
+  };
   const ready=staffId.trim()&&pw.trim();
   return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:24,background:"#F8FAFC"}}>
@@ -155,7 +121,6 @@ function DayPicker({day,month,year,pref,onSave,onCancel,allowedShifts}){
 function ModRequestForm({user,collection,onSubmit,onCancel}){
   const[day,setDay]=useState("");const[newPref,setNewPref]=useState("");const[reason,setReason]=useState("");
   const allowed=user.allowedShifts||WORK_SHIFTS;
-  const allOptions=[...allowed,..."off","ng".split(",")];
   return(
     <div style={{margin:"0 12px",padding:"14px",background:"#FFF7ED",borderRadius:10,border:"1.5px solid #FED7AA"}}>
       <div style={{fontSize:14,fontWeight:600,color:"#9A3412",marginBottom:10}}>修正リクエスト</div>
@@ -184,67 +149,114 @@ function ModRequestForm({user,collection,onSubmit,onCancel}){
 }
 
 /* ─── Main Screen ─── */
-function SubmissionScreen({user,onLogout}){
-  const lsGet=(key,def)=>{try{const v=localStorage.getItem(key);return v!=null?JSON.parse(v):def;}catch{return def;}};
-  const[openCollections,setOpenCollections]=useState(()=>loadAdminCollections());
-  useEffect(()=>{
-    const refresh=()=>setOpenCollections(loadAdminCollections());
-    window.addEventListener('storage',refresh);
-    window.addEventListener('focus',refresh);
-    return()=>{window.removeEventListener('storage',refresh);window.removeEventListener('focus',refresh);};
-  },[]);
+function SubmissionScreen({user,collections,onLogout}){
+  const openCollections=useMemo(()=>
+    collections
+      .filter(c=>c.status==="collecting"||c.status==="closed")
+      .sort((a,b)=>a.targetYear!==b.targetYear?a.targetYear-b.targetYear:a.targetMonth-b.targetMonth)
+  ,[collections]);
+
   const[activeIdx,setActiveIdx]=useState(()=>{const ci=openCollections.findIndex(c=>c.status==="collecting");return ci>=0?ci:0;});
-  useEffect(()=>{setActiveIdx(i=>{const ci=openCollections.findIndex(c=>c.status==="collecting");const best=ci>=0?ci:0;return i<openCollections.length?i:best;});},[openCollections]);
   const col=openCollections[activeIdx]||null;
 
-  const targetYear=col?.targetYear||2026;
-  const targetMonth=col?.targetMonth||3;
-  const m0=targetMonth;
+  const targetYear=col?.targetYear??new Date().getFullYear();
+  const targetMonth=col?.targetMonth??(new Date().getMonth()); // 0-indexed (e.g. 3=April), same as JS Date
+  const m0=targetMonth; // already 0-indexed
   const dim=col?daysIn(targetYear,m0):0;
   const isClosed=col?.status==="closed";
 
-  const[prefs,setPrefs]=useState(()=>lsGet(`shift_demo_prefs_${user.id}`,{}));
-  const[submitted,setSubmitted]=useState(()=>lsGet(`shift_demo_submitted_${user.id}`,{}));
-  useEffect(()=>{try{localStorage.setItem(`shift_demo_prefs_${user.id}`,JSON.stringify(prefs));}catch{}},[prefs,user.id]);
-  useEffect(()=>{try{localStorage.setItem(`shift_demo_submitted_${user.id}`,JSON.stringify(submitted));}catch{}},[submitted,user.id]);
+  /* prefs: keyed as "year-m0-day" (m0 = 0-indexed month) */
+  const[prefs,setPrefs]=useState({});
+  const[submitted,setSubmitted]=useState({});
+  const[loading,setLoading]=useState(true);
   const[showConfirm,setShowConfirm]=useState(false);
   const[comment,setComment]=useState("");
   const[selectedDay,setSelectedDay]=useState(null);
   const[showModForm,setShowModForm]=useState(false);
   const[modSent,setModSent]=useState(false);
 
-  const submKey=col?`${targetYear}-${m0}`:"";
+  /* ── Load user's pref data from Supabase ── */
+  useEffect(()=>{
+    const load=async()=>{
+      setLoading(true);
+      const{data}=await supabase.from('pref_data')
+        .select('date,pref1,pref2,collection_id')
+        .eq('facility_id',FID)
+        .eq('staff_id',user.id);
+      if(data){
+        const prefsObj={};
+        const submObj={};
+        data.forEach(p=>{
+          const[y,m1,d]=p.date.split('-').map(Number);
+          const m0key=m1-1; // 0-indexed month
+          prefsObj[`${y}-${m0key}-${d}`]={pref1:p.pref1,pref2:p.pref2};
+          // mark collection as submitted if any pref exists
+          const matchCol=collections.find(c=>c.id===p.collection_id);
+          if(matchCol)submObj[`${matchCol.targetYear}-${matchCol.targetMonth}`]=true;
+        });
+        setPrefs(prefsObj);
+        setSubmitted(submObj);
+      }
+      setLoading(false);
+    };
+    load();
+  },[user.id]);
+
+  const submKey=col?`${targetYear}-${m0}`:""; // m0 matches key used in load()
   const isSubmitted=!!submitted[submKey];
 
   const firstDow=col?dowN(targetYear,m0,1):0;
   const pk=(d)=>`${targetYear}-${m0}-${d}`;
   const getPref=(d)=>prefs[pk(d)]||null;
 
-  const savePref=(d,val)=>{
+  const savePref=async(d,val)=>{
     if(isClosed||isSubmitted)return;
-    const key=pk(d);
-    const sharedKey=`${user.id}-${targetYear}-${targetMonth}-${d}`;
+    const localKey=pk(d);
+    const dateStr=toDateStr(targetYear,m0,d);
     if(!val){
-      setPrefs(p=>{const n={...p};delete n[key];return n;});
-      try{const pd=JSON.parse(localStorage.getItem('shift_demo_prefData')||'{}');delete pd[sharedKey];localStorage.setItem('shift_demo_prefData',JSON.stringify(pd));}catch{}
+      setPrefs(p=>{const n={...p};delete n[localKey];return n;});
+      await supabase.from('pref_data').delete()
+        .eq('facility_id',FID).eq('staff_id',user.id).eq('date',dateStr);
     }else{
-      setPrefs(p=>({...p,[key]:val}));
-      try{const pd=JSON.parse(localStorage.getItem('shift_demo_prefData')||'{}');pd[sharedKey]=val;localStorage.setItem('shift_demo_prefData',JSON.stringify(pd));}catch{}
+      setPrefs(p=>({...p,[localKey]:val}));
+      await supabase.from('pref_data').upsert({
+        facility_id:FID,staff_id:user.id,collection_id:col?.id,
+        date:dateStr,pref1:val.pref1,pref2:val.pref2||null
+      },{onConflict:'facility_id,staff_id,date'});
     }
     setSelectedDay(null);
   };
 
-  const filledDays=useMemo(()=>{if(!col)return 0;let c=0;for(let d=1;d<=dim;d++){if(prefs[pk(d)])c++;}return c;},[prefs,dim,col]);
+  const filledDays=useMemo(()=>{if(!col)return 0;let c=0;for(let d=1;d<=dim;d++){if(prefs[pk(d)])c++;}return c;},[prefs,dim,col,targetYear,m0]);
   const progress=dim?Math.round((filledDays/dim)*100):0;
 
-  const role=ROLES[user.role];
+  const ROLES_MAP={
+    doctor:{label:"医師"},nurse:{label:"看護師"},reception:{label:"受付"},
+    tech:{label:"検査技師"},pt:{label:"理学療法士"},assistant:{label:"看護助手"},
+  };
+  const role=ROLES_MAP[user.role]||{label:user.role};
   const allowed=user.allowedShifts||WORK_SHIFTS;
 
-  const handleModSubmit=(data)=>{
-    const req={staffId:user.id,targetYear,targetMonth,day:data.day,newPref1:data.newPref1,newPref2:null,reason:data.reason,status:"pending"};
-    try{const existing=JSON.parse(localStorage.getItem('shift_demo_modRequests')||'[]');localStorage.setItem('shift_demo_modRequests',JSON.stringify([...existing,req]));}catch{}
+  const handleModSubmit=async(data)=>{
+    await supabase.from('mod_requests').insert({
+      facility_id:FID,staff_id:user.id,collection_id:col?.id,
+      day:data.day,new_pref1:data.newPref1,new_pref2:null,
+      reason:data.reason,status:'pending'
+    });
     setModSent(true);setShowModForm(false);
   };
+
+  if(loading){
+    return(
+      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#F8FAFC",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif"}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{width:32,height:32,border:"3px solid #DBEAFE",borderTop:"3px solid #1D4ED8",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}/>
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+          <div style={{fontSize:13,color:"#475569"}}>データを読み込み中…</div>
+        </div>
+      </div>
+    );
+  }
 
   if(openCollections.length===0){
     return(
@@ -407,7 +419,38 @@ function SubmissionScreen({user,onLogout}){
   );
 }
 
+/* ─── App Root ─── */
 export default function StaffShiftApp(){
   const[user,setUser]=useState(null);
-  return user?<SubmissionScreen user={user} onLogout={()=>setUser(null)}/>:<TokenAuth onAuth={setUser}/>;
+  const[staffList,setStaffList]=useState([]);
+  const[collections,setCollections]=useState([]);
+  const[loading,setLoading]=useState(true);
+
+  useEffect(()=>{
+    const load=async()=>{
+      const[{data:staff},{data:cols}]=await Promise.all([
+        supabase.from('staff_members').select('*').eq('facility_id',FID).order('id'),
+        supabase.from('collections').select('*').eq('facility_id',FID),
+      ]);
+      if(staff)setStaffList(staff.map(s=>({id:s.id,name:s.name,role:s.role,empType:s.emp_type,allowedShifts:s.allowed_shifts})));
+      if(cols)setCollections(cols.map(c=>({id:c.id,status:c.status,targetYear:c.target_year,targetMonth:c.target_month,deadline:c.deadline})));
+      setLoading(false);
+    };
+    load();
+  },[]);
+
+  if(loading){
+    return(
+      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#F8FAFC",fontFamily:"'Noto Sans JP','Hiragino Kaku Gothic ProN',sans-serif"}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{width:32,height:32,border:"3px solid #DBEAFE",borderTop:"3px solid #1D4ED8",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto 12px"}}/>
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+          <div style={{fontSize:13,color:"#475569"}}>データを読み込み中…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if(user)return <SubmissionScreen user={user} collections={collections} onLogout={()=>setUser(null)}/>;
+  return <TokenAuth staffList={staffList} onAuth={setUser}/>;
 }
